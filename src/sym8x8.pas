@@ -7,9 +7,6 @@ interface
 
 uses Crt, GDConsts, GDVars, Blit, GameIo;
 
-{ Empty routine with no callers. }
-procedure Noop8x8;
-
 { Loads an 8x8 symbol set from 8X8D<disk>.DAX, with a transparency mask for light magenta, then discards pending keys. A
   load failure prints the file name and block, waits for a key and exits to DOS.
   @param(fileId The block of the DAX file that holds the set.)
@@ -81,10 +78,6 @@ begin
       Blit.ShowPic(col, row, GDVars.curSymbolSet);
     end;
   end;
-end;
-
-procedure Noop8x8;
-begin
 end;
 
 begin

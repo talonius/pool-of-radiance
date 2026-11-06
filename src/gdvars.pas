@@ -87,8 +87,8 @@ var
   { The virtual disk digit appended to the FINAL picture names. }
   finalSfx: String[1];
 
-{ Character menus, timed effects, spell and scroll selection, the configuration file, the play session, the GBVM zones,
-  the interface state and the video registers. }
+{ Character menus, timed effects, spell and scroll selection, the configuration file, the play session, the GBVM zones
+  and the interface state. }
 var
   { The character DisplayChar shows, saved while it runs. }
   tempCr1: Types.PCharRecord;
@@ -112,8 +112,8 @@ var
   spellScratch2: Byte;
   { Weight of the current character's readied items. }
   equippedWeight: Word;
-  { Where GameBoot moves the heap's free-list record when it reserves Tandy graphics memory below FreePtr. }
-  gfxRelocDest: Types.PFreeRange;
+  { HeapEnd as GameBoot lowers it to reserve graphics memory. }
+  gfxReserve: Pointer;
   { A character read from POOL.CFG or the keyboard while the configuration is read. }
   cfgChar: Char;
   { POOL.CFG, read line by line. }
@@ -124,6 +124,8 @@ var
   cfgErr: Byte;
   { IOResult of DaxIo.FileExists. }
   ioErr: Integer;
+  { Nonzero makes HeapErr force a save before returning to DOS; never set. }
+  heapFailureSaveEnabled: Byte;
   { False stops the title sequence after its first picture (POOL.CFG line 5 is not 'F'). }
   fullIntro: Boolean;
   { GBVM word bank 0. }
@@ -169,6 +171,9 @@ var
   partyDefeated: Boolean;
   { Nonzero delays each message printed to the message window. }
   msgDelayFlag: Byte;
+
+{ The BIOS register record, the EGA pages and the video modes. }
+var
   { Register record handed to Dos.Intr for the BIOS video calls; every unit calling the BIOS uses this one record. }
   interruptRegs: Types.TRegisters;
   { EGA segment of the page on display. }
@@ -344,7 +349,7 @@ var
   { Saving throw type, 0..4. }
   saveType: Byte;
 
-{ Effect handlers, the 3D view, the party's position, wall and portrait caches, menus and spell targeting. }
+{ Effect handlers, the 3D view, the party's position, wall and portrait caches and menu state. }
 var
   { Effect handlers, indexed by effect id. }
   effectFns: array[C_Effect.BLESS..C_Effect.READY_RING_OF_INVISIBILITY] of Types.TEffectHandler;
@@ -375,10 +380,25 @@ var
   portraitCache: array[1..2] of Types.TPortSlot;
   { Name of the picture archive loaded. }
   picArcName: String[8];
+  { Krynn data SSI left behind (not all of its Krynn declarations were compiled out); PoR never uses it. }
+  champSavedPictureName: array[0..8] of Byte;
   { Picture id loaded from picArcName; 255 invalidates the pair. }
   picArcId: Byte;
+  { Krynn data SSI left behind (not all of its Krynn declarations were compiled out); PoR never uses it. }
+  champSavedPictureState: array[0..11] of Byte;
   { Position of the first visible entry of a vertical menu, from 0. }
   vertTop: Integer;
+  { The highlighted choice of a horizontal menu, from 1; reset to 1 when out of range. }
+  horizChoice: Byte;
+  { Set when the key that ended a horizontal menu was an extended key. }
+  extFlag: Boolean;
+
+{ The menu auto-answer and spell targeting. }
+var
+  { The menu auto-answer: a timeout and the key to answer with. }
+  menuAutoAnswer: Types.TMenuAuto;
+  { unused }
+  menuAutoAnswerTail: array[0..76] of Byte;
   { The item a spell is cast from. }
   castItem: Types.PItemRec;
   { The spell target picker and the spell handlers, indexed by spell id. }
@@ -423,12 +443,15 @@ var
     three to 1. }
   doorOpen: array[0..2] of Byte;
 
-{ The combat round: targets, attacks and quick combat. }
+{ The combat round: targets, attacks and quick combat; the script color selectors and registers, the interpreter's stack
+  and comparison flags, script variables and strings, and the experience share after combat. }
 var
   { Set when the party confirms an attack on an ally (CbtActs.CheckAttackAlly). }
   attackedAllies: Byte;
   { The combat round, counted from 0. }
   roundCounter: Byte;
+  { unused }
+  roundCounterTail: Byte;
   { Creature indices of the potential targets. }
   potentialTargets: array[1..72] of Byte;
   { Attacks made this round with the first and second attacks. }
@@ -444,10 +467,8 @@ var
   { The combat moving-icon sheet: CombatSt allocates it, CharHlp copies icon facings in and draws from it, Combat frees
     it. }
   moveIconSheet: Types.PImgBuf;
-
-{ Script color selectors and registers, the interpreter's stack and comparison flags, script variables and strings, and
-  the experience share after combat. }
-var
+  { unused }
+  moveIconSheetTail: array[0..301] of Byte;
   { Wall color chosen by the script; writing it asks for a view redraw. }
   wallColorSel: Byte;
   { Ceiling and floor color chosen by the script; writing it asks for a view redraw. }
@@ -548,13 +569,8 @@ var
   inEncMenu: Byte;
   { The picture id shown last, copied from C_Gbvm.PICTURE_LOADING. }
   picIdShown: Byte;
-
-{ The heap end at start-up. }
-var
-  { FreePtr as GameBoot leaves it at start-up. }
-  bootFreePtr: Pointer;
   { unused }
-  bootFreePtrTail: array[0..1] of Byte;
+  picIdShownTail: array[0..3] of Byte;
 
 implementation
 

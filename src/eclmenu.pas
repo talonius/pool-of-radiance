@@ -4,9 +4,8 @@ unit EclMenu;
 
 interface
 
-uses Types, Crt, C_Area, C_Npc, C_Save, C_Msg, GDConsts, GDVars, Portrait, TextRend, DaxIo, CharHlp,
-  MenuCore, MapView, SaveLoad, ViewChar, FxEngine, View3D, MapTiles, C_Effect, C_Ecl, C_Keys, C_Status, C_Gbvm, C_Dir,
-  C_Money;
+uses Types, Crt, C_Area, C_Npc, C_Save, C_Msg, GDConsts, GDVars, MapView, SaveLoad, ViewChar, C_Effect, C_Ecl, C_Keys,
+  C_Status, C_Gbvm, C_Dir, C_Money, DaxIo, MenuCore, TextRend, View3D, Portrait, CharHlp, MapTiles, FxEngine;
 
 { Gives the value of a loaded ECL variable: type 0 its byte, types 1 and 3 the GBVM word at its address, type 2 its
   word, and $81 (a string reference) its GBVM address. Note: the locals are named backwards, vHi holding the variable's
@@ -32,11 +31,11 @@ procedure EclInit;
   @param(scriptId The script's block.) }
 procedure LoadEclScript(scriptId: Byte);
 
-{ Allocates and loads a monster.
-  @param(id The monster's block.)
-  @param(creature Receives the monster.)
-  @param(inv Receives the head of its items.)
-  @param(effect Receives the head of its effects.) }
+{ Allocates a creature record and loads a monster into it.
+  @param(id The monster's record number.)
+  @param(creature Receives the new record.)
+  @param(inv Receives its item list.)
+  @param(effect Receives its effect list.) }
 procedure InitCreature(id: Byte; var creature: Types.PCharRecord; var inv: Types.PItemRec;
                        var effect: Types.PEffectRec);
 
@@ -65,36 +64,8 @@ procedure DisplayMonster(sprId, picId, dist: Byte; var flags: Types.TMonFlags);
 { Joins two bytes into a word.
   @param(lowByte The low byte.)
   @param(highByte The high byte.)
-  @returns(The word.) }
+  @returns(The high byte times 256 plus the low byte.) }
 function CombineBytesToWord(lowByte, highByte: Byte): Word;
-
-{ Turns a 6-bit game character into ASCII: 0 to 31 become @ to _, higher codes stay as they are.
-  @param(c The game character.)
-  @returns(The ASCII character.) }
-function DecodeGameCharacter(c: Byte): Char;
-
-{ Finds the GBVM zone of an address: 0 for $4900 to $4CFF, 1 for $6B00 to $6EFF, 2 for $9700 to $98FF, 3 for $9900 to
-  $B6FF (the script), otherwise 4 (special registers).
-  @param(address The address.)
-  @returns(The zone.) }
-function GbvmZone(address: Word): Byte;
-
-{ Finds a creature's place in the creature list.
-  @param(creature The creature.)
-  @returns(Its place from 0; the list's length when it is not there.) }
-function FindCurCharIdx(creature: Types.PCharRecord): Byte;
-
-{ Reads a zone 1 address that maps to the current character or other game state. Note: $10D, and $2CF for Charisma
-  outside 3 to 25, are handled but leave the result unset.
-  @param(address The address.)
-  @param(found Receives True when the address is handled here.)
-  @returns(The value.) }
-function SpecialReadZ1(address: Word; var found: Boolean): Word;
-
-{ Writes to a zone 1 address that maps to the current character or other game state, besides the zone's own word.
-  @param(address The address.)
-  @param(value The value.) }
-procedure SpecialWriteZ1(address, value: Word);
 
 { Writes a value to a GBVM address; zone 1 also runs its special handling, and zone 4 sets special registers and the
   party's position, facing and view colors.
@@ -113,18 +84,6 @@ function ReadGbvm(address: Word): Word;
   @param(address The address.)
   @param(s The string.) }
 procedure WriteGbvmString(address: Word; s: String);
-
-{ Decodes packed 6-bit game characters after the ECL IP into a string, four characters to three bytes; zero characters
-  are dropped. The IP ends on the last byte read.
-  @param(len The number of packed bytes.)
-  @param(strIdx The gbStrings entry to fill.) }
-procedure ConvGbString(len, strIdx: Byte);
-
-{ Copies the zero-terminated GBVM string at an address into a string, one character per cell (the low byte of a word
-  cell). GBVM $6B00 gives the current character's name, and zone 4 an empty string.
-  @param(strIdx The gbStrings entry to fill.)
-  @param(address The address.) }
-procedure DerefGbString(strIdx: Byte; address: Word);
 
 { Runs a horizontal menu with ~ hotkeys; extended keys select the previous or next character.
   @param(query The prompt.)
@@ -184,19 +143,19 @@ procedure EclMoveForward;
   @param(creature The creature.) }
 procedure RobMoney(fraction: Real; creature: Types.PCharRecord);
 
-{ Steals each of a creature's items on a roll within the chance; an item heavier than 255 takes 90 off the chance and
-  one heavier than 24 takes 50. Note: the reductions come off the chance itself, so they add up over the items.
-  @param(chance The chance, in percent.)
-  @param(creature The creature.) }
+{ Takes each of a character's items with a chance in percent. An item heavier than 255 lowers the chance by 90 and one
+  heavier than 24 by 50, to no less than 0. Note: the lowered chance carries over to the items after it.
+  @param(chance The chance in percent.)
+  @param(creature The character robbed.) }
 procedure RobItems(chance: Byte; creature: Types.PCharRecord);
 
 { Steps the ECL IP past the command at it without running it, loading the command's variables; an opcode not listed
   skips one byte. }
 procedure SkipEclCmd;
 
-{ Finds the party's highest and lowest movement, haste doubling and otherwise slow halving it. Both start from the first
-  member's unadjusted movement, so that value always lies within them. Note: the first member is read before the check
-  for nil, so an empty party is read through nil.
+{ Finds the highest and lowest movement in the creature list, haste doubling and otherwise slow halving it. Both start
+  from the first creature's unadjusted movement, so that value always lies within them. Note: the first creature is read
+  before the check for nil, so an empty list is read through nil.
   @param(hiMove Receives the highest movement.)
   @param(loMove Receives the lowest movement.) }
 procedure MoveExtremes(var hiMove, loMove: Byte);
@@ -209,6 +168,10 @@ procedure MoveExtremes(var hiMove, loMove: Byte);
 procedure EclInflictDamage(dmg: Word; creature: Types.PCharRecord);
 
 implementation
+
+procedure ConvGbString(len, strIdx: Byte); forward;
+
+procedure DerefGbString(strIdx: Byte; address: Word); forward;
 
 procedure LoadEclVars(count: Byte);
 var
@@ -439,6 +402,9 @@ begin
   CombineBytesToWord := highByte * 256 + lowByte;
 end;
 
+{ Turns a 6-bit game character into ASCII: codes below 32 gain 64, and higher codes stay as they are.
+  @param(c The game character.)
+  @returns(The ASCII character.) }
 function DecodeGameCharacter(c: Byte): Char;
 begin
   if c > 31 then
@@ -447,6 +413,10 @@ begin
     DecodeGameCharacter := Chr(c + 64);
 end;
 
+{ Finds the GBVM zone of an address: 0 for $4900 to $4CFF, 1 for $6B00 to $6EFF, 2 for $9700 to $98FF, 3 for $9900 to
+  $B6FF (the script), otherwise 4 (special registers).
+  @param(address The address.)
+  @returns(The zone.) }
 function GbvmZone(address: Word): Byte;
 begin
   GbvmZone := 4;
@@ -456,6 +426,9 @@ begin
   if (address >= $9900) and (address <= $B6FF) then GbvmZone := 3;
 end;
 
+{ Finds a creature's place in the creature list.
+  @param(creature The creature.)
+  @returns(Its place from 0; the list's length when it is not there.) }
 function FindCurCharIdx(creature: Types.PCharRecord): Byte;
 var
   idx: Byte;
@@ -476,6 +449,11 @@ begin
   FindCurCharIdx := idx;
 end;
 
+{ Reads a zone 1 address that maps to the current character or other game state. Note: $10D, and $2CF for Charisma
+  outside 3 to 25, are handled but leave the result unset.
+  @param(address The address.)
+  @param(found Receives True when the address is handled here.)
+  @returns(The value.) }
 function SpecialReadZ1(address: Word; var found: Boolean): Word;
 var
   t: Byte;
@@ -540,6 +518,9 @@ begin
   end;
 end;
 
+{ Writes to a zone 1 address that maps to the current character or other game state, besides the zone's own word.
+  @param(address The address.)
+  @param(value The value.) }
 procedure SpecialWriteZ1(address, value: Word);
 var
   t: Byte;
@@ -608,7 +589,7 @@ end;
 
 procedure WriteGbvm(address, value: Word);
 var
-  zone: ShortInt;
+  zone: Byte;
   ok: Boolean;
 begin
   zone := EclMenu.GbvmZone(address);
@@ -716,7 +697,7 @@ begin
           { sign-extends (ShortInt) }
           0: ReadGbvm := GDVars.partyPos.mapX;
           1: ReadGbvm := GDVars.partyPos.mapY;
-          2: ReadGbvm := Word(GDVars.partyPos.facing) div 2;
+          2: ReadGbvm := GDVars.partyPos.facing div 2;
           3: ReadGbvm := GDVars.partyPos.wallAhead;
           4: ReadGbvm := GDVars.partyPos.eventAtCell;
           { Wall color ($C059): write-only, result unassigned }
@@ -728,7 +709,7 @@ end;
 
 procedure WriteGbvmString(address: Word; s: String);
 var
-  zone: ShortInt;
+  zone: Byte;
   len: Byte;
   i: Byte;
 begin
@@ -761,6 +742,10 @@ begin
   end;
 end;
 
+{ Decodes packed 6-bit game characters after the ECL IP into a string, four characters to three bytes; zero characters
+  are dropped. The IP ends on the last byte read.
+  @param(len The number of packed bytes.)
+  @param(strIdx The gbStrings entry to fill.) }
 procedure ConvGbString(len, strIdx: Byte);
 var
   i: Byte;
@@ -811,9 +796,13 @@ begin
   end;
 end;
 
+{ Copies the zero-terminated GBVM string at an address into a string, one character per cell (the low byte of a word
+  cell). GBVM $6B00 gives the current character's name, and zone 4 an empty string.
+  @param(strIdx The gbStrings entry to fill.)
+  @param(address The address.) }
 procedure DerefGbString(strIdx: Byte; address: Word);
 var
-  zone: ShortInt;
+  zone: Byte;
   i: Byte;
 begin
   zone := EclMenu.GbvmZone(address);

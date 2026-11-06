@@ -4,20 +4,15 @@ unit CharGen;
 
 interface
 
-uses Types, Crt, C_Area, C_Npc, GDConsts, GDVars, MenuCore, SaveLoad, ViewChar, ClassCal, FxEngine,
-  Portrait, CbtMap, MapTiles, CharHlp, TextRend, Border, Blit, GameIo, C_Class, C_Race, C_Keys, C_Effect, C_Status,
-  C_Ifc, C_Gbvm, C_Abil, C_Money;
+uses Types, Crt, C_Area, C_Npc, GDConsts, GDVars, SaveLoad, ViewChar, Border, GameIo, C_Class, C_Race, C_Keys, C_Effect,
+  C_Status, C_Ifc, C_Gbvm, C_Abil, C_Money, CharHlp, TextRend, MenuCore, FxEngine, ClassCal, MapTiles, Portrait, Blit,
+  CbtMap;
 
 { Runs the party-roster main menu: Create, Drop, Modify, Train, View, Add, Remove, Load, Save, Begin and Exit, offered
   as the party allows; Home and End select the previous or next character. It returns once a loaded game leaves the main
   menu (setting loadedSave) or Begin Adventuring starts the game indoors; Exit to DOS saves until a save succeeds. J
   sets stingMode when the first command-line argument is STING. }
 procedure MainMenu;
-
-{ Adds characters from the CHARLIST.TXT roster to the party, unless already there (same name and randByte): at most six
-  that are not NPCs and eight members in all. Added names are marked with '* ' and the roster is saved back. Note: the
-  menu's Exit flag is never set, so the menu gets an uninitialized value. }
-procedure AddCharacterMenu;
 
 { Takes the current character out of the creature list and frees it; the next creature becomes current when it was the
   first, else the one before it. A current character not in the list is left alone.
@@ -33,12 +28,6 @@ procedure CustomizeIcon;
 implementation
 
 const
-  { Ability-score indexes (TCharRecord.stats) }
-  INTELLIGENCE = 1;
-  WISDOM = 2;
-  DEXTERITY = 3;
-  CONSTITUTION = 4;
-
   { Class values (TCharRecord.charClass) }
   CLASS_MONK = 7;
   CLASS_CLERIC_MAGE = 11;
@@ -53,14 +42,6 @@ const
   { Script-visible game-memory address of the bitmask of trainable classes }
   GBVM_TRAIN_CLASS_MASK = $6DA8;
 
-type
-  TRace = (Monster, Dwarf, Elf, Gnome,
-           HalfElf, Halfling, HalfOrc, Human);
-  TClass = (ClassCleric, ClassDruid, ClassFighter, ClassPaladin, ClassRanger, ClassMage,
-            ClassThief, ClassMonk, ClassClericFighter, ClassClericFighterMage,
-            ClassClericRanger, ClassClericMage, ClassClericThief, ClassFighterMage,
-            ClassFighterThief, ClassFighterMageThief, ClassMageThief);
-
 { Ability scores: stats[0..5] follow the TCharRecord strCur..chaCur order, Str Int Wis Dex Con Cha (the C_Abil
   indices). }
 
@@ -72,17 +53,19 @@ procedure ModifyCharacterMenu; forward;
 
 procedure TrainingMenu; forward;
 
-procedure CustomizePortrait; forward;
+procedure AddCharacterMenu; forward;
 
 function ConHpBonus(creature: Types.PCharRecord): ShortInt; forward;
 
-function HpMaximum(creature: Types.PCharRecord): Byte; forward;
-
 function HpMinimum(creature: Types.PCharRecord): Byte; forward;
+
+function HpMaximum(creature: Types.PCharRecord): Byte; forward;
 
 function RollFirstLevelHp(creature: Types.PCharRecord; mask: Byte): Byte; forward;
 
 procedure TakeCoins(gp: LongInt; creature: Types.PCharRecord); forward;
+
+procedure CustomizePortrait; forward;
 
 { Frees a creature's combat record, items and effects, then the record itself.
   @param(creature The creature; the caller's pointer is left as it was.) }
@@ -294,13 +277,13 @@ begin
   list^.inUse := 1;
   list^.name := 'Pick Race';
   for k := 1 to 7 do
-    case TRace(k) of
-      Dwarf..Halfling: begin
+    case k of
+      C_Race.DWARF..C_Race.HALFLING: begin
               m := MenuCore.FindListMember(k, list);
               m^.name := '  ' + GDConsts.raceNames[k];
             end;
       { half-orc (6) row skipped }
-      Human: begin
+      C_Race.HUMAN: begin
               m := MenuCore.FindListMember(k - 1, list);
               m^.name := '  ' + GDConsts.raceNames[k];
             end;
@@ -321,31 +304,31 @@ begin
   with creature^ do begin
     race := sel;
     { Racial innate effects. }
-    case Char(race) of
-      Char(C_Race.HALFLING): begin
+    case race of
+      C_Race.HALFLING: begin
            iconSize := 1;
            FxEngine.AddEffect(Types.PCharRecord(creature), C_Effect.CONSTITUTION_POISON_SAVE, 0, 255, False);
            FxEngine.AddEffect(Types.PCharRecord(creature), C_Effect.CONSTITUTION_SPELL_SAVE, 0, 255, False);
          end;
-      Char(C_Race.DWARF): begin
+      C_Race.DWARF: begin
            iconSize := 1;
            FxEngine.AddEffect(Types.PCharRecord(creature), C_Effect.CONSTITUTION_POISON_SAVE, 0, 255, False);
            FxEngine.AddEffect(Types.PCharRecord(creature), C_Effect.CONSTITUTION_SPELL_SAVE, 0, 255, False);
            FxEngine.AddEffect(Types.PCharRecord(creature), C_Effect.DWARF_ATTACK_BONUS, 0, 255, False);
            FxEngine.AddEffect(Types.PCharRecord(creature), C_Effect.DWARF_GIANT_DEFENSE, 0, 255, False);
          end;
-      Char(C_Race.GNOME): begin
+      C_Race.GNOME: begin
            iconSize := 1;
            FxEngine.AddEffect(Types.PCharRecord(creature), C_Effect.CONSTITUTION_SPELL_SAVE, 0, 255, False);
            FxEngine.AddEffect(Types.PCharRecord(creature), C_Effect.GNOME_ATTACK_BONUS, 0, 255, False);
            FxEngine.AddEffect(Types.PCharRecord(creature), C_Effect.DWARF_GIANT_DEFENSE, 0, 255, False);
            FxEngine.AddEffect(Types.PCharRecord(creature), C_Effect.GNOME_BUGBEAR_DEFENSE, 0, 255, False);
          end;
-      Char(C_Race.ELF): begin
+      C_Race.ELF: begin
            iconSize := 2;
            FxEngine.AddEffect(Types.PCharRecord(creature), C_Effect.ELF_RESISTANCE, 0, 255, False);
          end;
-      Char(C_Race.HALF_ELF): begin
+      C_Race.HALF_ELF: begin
            iconSize := 2;
            FxEngine.AddEffect(Types.PCharRecord(creature), C_Effect.HALF_ELF_RESISTANCE, 0, 255, False);
          end;
@@ -397,35 +380,35 @@ begin
   with creature^ do begin
     charClass := GDConsts.classesByRace[race, sel];
     levelHighest := 1;
-    case TClass(charClass) of
-      ClassCleric..ClassMonk: classLevels[charClass] := 1;
-      ClassClericFighter: begin
+    case charClass of
+      C_Class.CLERIC..CharGen.CLASS_MONK: classLevels[charClass] := 1;
+      C_Class.CLERIC_FIGHTER: begin
               classLevels[C_Class.CLERIC_LEVEL] := 1; classLevels[C_Class.FIGHTER_LEVEL] := 1;
             end;
-      ClassClericFighterMage: begin
+      C_Class.CLERIC_FIGHTER_MAGE: begin
               classLevels[C_Class.CLERIC_LEVEL] := 1; classLevels[C_Class.FIGHTER_LEVEL] := 1;
               classLevels[C_Class.MAGE_LEVEL] := 1;
             end;
-      ClassClericRanger: begin
+      C_Class.CLERIC_RANGER: begin
               classLevels[C_Class.CLERIC_LEVEL] := 1; classLevels[CharGen.RANGER_LEVEL] := 1;
             end;
-      ClassClericMage: begin
+      CharGen.CLASS_CLERIC_MAGE: begin
               classLevels[C_Class.CLERIC_LEVEL] := 1; classLevels[C_Class.MAGE_LEVEL] := 1;
             end;
-      ClassClericThief: begin
+      CharGen.CLASS_CLERIC_THIEF: begin
               classLevels[C_Class.CLERIC_LEVEL] := 1; classLevels[C_Class.THIEF_LEVEL] := 1;
             end;
-      ClassFighterMage: begin
+      CharGen.CLASS_FIGHTER_MAGE: begin
               classLevels[C_Class.FIGHTER_LEVEL] := 1; classLevels[C_Class.MAGE_LEVEL] := 1;
             end;
-      ClassFighterThief: begin
+      C_Class.FIGHTER_THIEF: begin
               classLevels[C_Class.FIGHTER_LEVEL] := 1; classLevels[C_Class.THIEF_LEVEL] := 1;
             end;
-      ClassFighterMageThief: begin
+      C_Class.FIGHTER_MAGE_THIEF: begin
               classLevels[C_Class.FIGHTER_LEVEL] := 1; classLevels[C_Class.MAGE_LEVEL] := 1;
               classLevels[C_Class.THIEF_LEVEL] := 1;
             end;
-      ClassMageThief: begin
+      C_Class.MAGE_THIEF: begin
               classLevels[C_Class.MAGE_LEVEL] := 1; classLevels[C_Class.THIEF_LEVEL] := 1;
             end;
     end;
@@ -470,30 +453,30 @@ begin
       creature^.age := FxEngine.RollDice(num, sides) + base
   else
     with creature^ do
-      case Char(charClass) of
-        Char(C_Class.CLERIC_FIGHTER): age := GDConsts.startingAge[race, C_Class.CLERIC].base +
+      case charClass of
+        C_Class.CLERIC_FIGHTER: age := GDConsts.startingAge[race, C_Class.CLERIC].base +
                    GDConsts.startingAge[race, C_Class.CLERIC].sides * GDConsts.startingAge[race,
                        C_Class.CLERIC].num;
-        Char(C_Class.CLERIC_FIGHTER_MAGE): age := GDConsts.startingAge[race, C_Class.CLERIC].base +
+        C_Class.CLERIC_FIGHTER_MAGE: age := GDConsts.startingAge[race, C_Class.CLERIC].base +
                    GDConsts.startingAge[race, C_Class.CLERIC].sides * GDConsts.startingAge[race,
                        C_Class.CLERIC].num;
         { CLERIC_RANGER leaves age zero }
-        Char(CharGen.CLASS_CLERIC_MAGE): age := GDConsts.startingAge[race, C_Class.CLERIC].base +
+        CharGen.CLASS_CLERIC_MAGE: age := GDConsts.startingAge[race, C_Class.CLERIC].base +
                    GDConsts.startingAge[race, C_Class.CLERIC].sides * GDConsts.startingAge[race,
                        C_Class.CLERIC].num;
-        Char(CharGen.CLASS_CLERIC_THIEF): age := GDConsts.startingAge[race, C_Class.CLERIC].base +
+        CharGen.CLASS_CLERIC_THIEF: age := GDConsts.startingAge[race, C_Class.CLERIC].base +
                    GDConsts.startingAge[race, C_Class.CLERIC].sides * GDConsts.startingAge[race,
                        C_Class.CLERIC].num;
-        Char(CharGen.CLASS_FIGHTER_MAGE): age := GDConsts.startingAge[race, C_Class.MAGE].base +
+        CharGen.CLASS_FIGHTER_MAGE: age := GDConsts.startingAge[race, C_Class.MAGE].base +
                    GDConsts.startingAge[race, C_Class.MAGE].sides * GDConsts.startingAge[race,
                        C_Class.MAGE].num;
-        Char(C_Class.FIGHTER_THIEF): age := GDConsts.startingAge[race, C_Class.FIGHTER].base +
+        C_Class.FIGHTER_THIEF: age := GDConsts.startingAge[race, C_Class.FIGHTER].base +
                    GDConsts.startingAge[race, C_Class.FIGHTER].sides * GDConsts.startingAge[race,
                        C_Class.FIGHTER].num;
-        Char(C_Class.FIGHTER_MAGE_THIEF): age := GDConsts.startingAge[race, C_Class.MAGE].base +
+        C_Class.FIGHTER_MAGE_THIEF: age := GDConsts.startingAge[race, C_Class.MAGE].base +
                    GDConsts.startingAge[race, C_Class.MAGE].sides * GDConsts.startingAge[race,
                        C_Class.MAGE].num;
-        Char(C_Class.MAGE_THIEF): age := GDConsts.startingAge[race, C_Class.MAGE].base +
+        C_Class.MAGE_THIEF: age := GDConsts.startingAge[race, C_Class.MAGE].base +
                    GDConsts.startingAge[race, C_Class.MAGE].sides * GDConsts.startingAge[race,
                        C_Class.MAGE].num;
       end;
@@ -508,32 +491,32 @@ begin
       for j := 1 to 6 do begin
         roll := FxEngine.RollDice(3, 6);
         { Note: k still holds 7 (human) from the race-list loop, so no racial adjustment applies. }
-        case TRace(k) of
-          Dwarf: case Char(i) of
-               #4: Inc(roll);
-               #5: Dec(roll);
+        case k of
+          C_Race.DWARF: case i of
+               C_Abil.CONSTITUTION: Inc(roll);
+               C_Abil.CHARISMA: Dec(roll);
              end;
-          Elf: case Char(i) of
-               #3: Inc(roll);
-               #4: Dec(roll);
+          C_Race.ELF: case i of
+               C_Abil.DEXTERITY: Inc(roll);
+               C_Abil.CONSTITUTION: Dec(roll);
              end;
-          Halfling: case Char(i) of
-               #0: Dec(roll);
-               #3: Inc(roll);
+          C_Race.HALFLING: case i of
+               C_Abil.STRENGTH: Dec(roll);
+               C_Abil.DEXTERITY: Inc(roll);
              end;
-          HalfOrc: case Char(i) of
-               #0: Inc(roll);
-               #4: Inc(roll);
-               #5: Dec(roll, 2);
+          C_Race.HALF_ORC: case i of
+               C_Abil.STRENGTH: Inc(roll);
+               C_Abil.CONSTITUTION: Inc(roll);
+               C_Abil.CHARISMA: Dec(roll, 2);
              end;
         end;
         if creature^.stats[i] < roll then
           creature^.stats[i] := roll;
       end;
       with creature^ do
-        case Char(i) of
+        case i of
           { Strength }
-          #0: begin
+          C_Abil.STRENGTH: begin
                if (stats[i] > 0) and (GDConsts.ageCat[race, 1] < age) then
                  Inc(stats[i]);
                if (stats[i] > 0) and (GDConsts.ageCat[race, 2] < age) then
@@ -555,7 +538,7 @@ begin
                end;
              end;
           { Intelligence }
-          #1: begin
+          C_Abil.INTELLIGENCE: begin
                if GDConsts.ageCat[race, 2] < age then
                  Inc(stats[i]);
                if GDConsts.ageCat[race, 4] < age then
@@ -568,7 +551,7 @@ begin
                  stats[i] := GDConsts.classMin[charClass, i];
              end;
           { Wisdom }
-          #2: begin
+          C_Abil.WISDOM: begin
                if GDConsts.ageCat[race, 1] >= age then
                  Dec(stats[i]);
                if GDConsts.ageCat[race, 2] < age then
@@ -589,7 +572,7 @@ begin
                    stats[i] := 13;
              end;
           { Dexterity }
-          #3: begin
+          C_Abil.DEXTERITY: begin
                if GDConsts.ageCat[race, 3] < age then
                  Dec(stats[i], 2);
                if GDConsts.ageCat[race, 4] < age then
@@ -602,7 +585,7 @@ begin
                  stats[i] := GDConsts.classMin[charClass, i];
              end;
           { Constitution }
-          #4: begin
+          C_Abil.CONSTITUTION: begin
                if GDConsts.ageCat[race, 2] < age then
                  Dec(stats[i]);
                if GDConsts.ageCat[race, 3] < age then
@@ -617,7 +600,7 @@ begin
                  stats[i] := GDConsts.classMin[charClass, i];
              end;
           { Charisma }
-          #5: begin
+          C_Abil.CHARISMA: begin
                if stats[i] < GDConsts.raceStatLimits[race].chaMin then
                  stats[i] := GDConsts.raceStatLimits[race].chaMin;
                if stats[i] > GDConsts.raceStatLimits[race].chaMax then
@@ -640,23 +623,22 @@ begin
       clsCount := 0;
       for cls := 0 to 7 do
         if classLevels[cls] > 0 then begin
-          case Char(cls) of
-            Char(C_Class.CLERIC_LEVEL): clericSpells[1] := 1;
-            Char(C_Class.MAGE_LEVEL): mageSpells[1] := 1;
+          case cls of
+            C_Class.CLERIC_LEVEL: clericSpells[1] := 1;
+            C_Class.MAGE_LEVEL: mageSpells[1] := 1;
           end;
           Inc(hpTotal,
               FxEngine.RollDice(GDConsts.startingGold[cls].num, GDConsts.startingGold[cls].sides));
           Inc(clsCount);
-          case Char(cls) of
-            Char(C_Class.CLERIC_LEVEL): begin
+          case cls of
+            C_Class.CLERIC_LEVEL: begin
                  ClassCal.AwardWisdomBonus(Types.PCharRecord(creature));
-                 { 56 is the last index of spellsKnown }
-                 for slot := 1 to 56 do
+                 for slot := 1 to SizeOf(spellsKnown) div SizeOf(spellsKnown[1]) do
                    with GDConsts.spellTable[slot] do
                      if (castClass = 0) and (level = 1) then
                        spellsKnown[slot] := 1;
                end;
-            Char(C_Class.MAGE_LEVEL): begin
+            C_Class.MAGE_LEVEL: begin
                  { Detect Magic }
                  spellsKnown[11] := 1;
                  { Read Magic }
@@ -789,19 +771,19 @@ begin
             if statIdx < 6 then begin
               hold := statIdx;
               Dec(stats[hold]);
-              case Char(hold) of
-                #0: if strExc > 0 then begin
+              case hold of
+                C_Abil.STRENGTH: if strExc > 0 then begin
                      Dec(strExc);
                      Inc(stats[hold]);
                    end else if (stats[hold] < GDConsts.raceStatLimits[race].strMin[genderSp]) or
                      (stats[hold] < GDConsts.classMin[charClass, C_Abil.STRENGTH]) then
                      stats[hold] := GDConsts.raceStatLimits[race].strMin[genderSp];
-                #1: if (stats[hold] < GDConsts.raceStatLimits[race].intMin) or
-                  (stats[hold] < GDConsts.classMin[charClass, CharGen.INTELLIGENCE]) then
+                C_Abil.INTELLIGENCE: if (stats[hold] < GDConsts.raceStatLimits[race].intMin) or
+                  (stats[hold] < GDConsts.classMin[charClass, C_Abil.INTELLIGENCE]) then
                      stats[hold] := GDConsts.raceStatLimits[race].intMin;
-                #2: begin
+                C_Abil.WISDOM: begin
                      if (stats[hold] < GDConsts.raceStatLimits[race].wisMin) or
-                         (stats[hold] < GDConsts.classMin[charClass, CharGen.WISDOM]) then
+                         (stats[hold] < GDConsts.classMin[charClass, C_Abil.WISDOM]) then
                        stats[hold] := GDConsts.raceStatLimits[race].wisMin;
                      { Only clericSpells[1] is reset; [2] and [3] are not, so each keypress would re-award their bonus
                        with no ceiling (they are 0 for a new first-level character) }
@@ -809,21 +791,21 @@ begin
                        clericSpells[1] := 1;
                      ClassCal.AwardWisdomBonus(Types.PCharRecord(GDVars.curChar));
                    end;
-                #3: if (stats[hold] < GDConsts.raceStatLimits[race].dexMin) or
-                  (stats[hold] < GDConsts.classMin[charClass, CharGen.DEXTERITY]) then
+                C_Abil.DEXTERITY: if (stats[hold] < GDConsts.raceStatLimits[race].dexMin) or
+                  (stats[hold] < GDConsts.classMin[charClass, C_Abil.DEXTERITY]) then
                      stats[hold] := GDConsts.raceStatLimits[race].dexMin;
-                #4: begin
+                C_Abil.CONSTITUTION: begin
                      if (stats[hold] < GDConsts.raceStatLimits[race].conMin) or
-                         (stats[hold] < GDConsts.classMin[charClass, CharGen.CONSTITUTION]) then
+                         (stats[hold] < GDConsts.classMin[charClass, C_Abil.CONSTITUTION]) then
                        stats[hold] := GDConsts.raceStatLimits[race].conMin;
                      if CharGen.HpMaximum(GDVars.curChar) < hpMax then
                        hpMax := CharGen.HpMaximum(GDVars.curChar);
                      hpCur := hpMax;
                      statIdx := 6;
                      DisplayModifyField(False);
-                     statIdx := CharGen.CONSTITUTION;
+                     statIdx := C_Abil.CONSTITUTION;
                    end;
-                #5: if (stats[hold] < GDConsts.raceStatLimits[race].chaMin) or
+                C_Abil.CHARISMA: if (stats[hold] < GDConsts.raceStatLimits[race].chaMin) or
                   (stats[hold] < GDConsts.classMin[charClass, C_Abil.CHARISMA]) then
                      stats[hold] := GDConsts.raceStatLimits[race].chaMin;
               end;
@@ -840,16 +822,16 @@ begin
             if statIdx < 6 then begin
               hold := statIdx;
               Inc(stats[hold]);
-              case Char(hold) of
-                #0: if stats[hold] > GDConsts.raceStatLimits[race].strMax[genderSp] then begin
+              case hold of
+                C_Abil.STRENGTH: if stats[hold] > GDConsts.raceStatLimits[race].strMax[genderSp] then begin
                      if (stats[hold] > 18) and (classLevels[C_Class.FIGHTER_LEVEL] > 0) and
                          (GDConsts.raceStatLimits[race].excMax[genderSp] > strExc) then
                        Inc(strExc);
                      stats[hold] := GDConsts.raceStatLimits[race].strMax[genderSp];
                    end;
-                #1: if stats[hold] > GDConsts.raceStatLimits[race].intMax then
+                C_Abil.INTELLIGENCE: if stats[hold] > GDConsts.raceStatLimits[race].intMax then
                      stats[hold] := GDConsts.raceStatLimits[race].intMax;
-                #2: begin
+                C_Abil.WISDOM: begin
                      if stats[hold] > GDConsts.raceStatLimits[race].wisMax then
                        stats[hold] := GDConsts.raceStatLimits[race].wisMax;
                      { clericSpells[1] only, same shape as the Left arm above }
@@ -857,9 +839,9 @@ begin
                        clericSpells[1] := 1;
                      ClassCal.AwardWisdomBonus(Types.PCharRecord(GDVars.curChar));
                    end;
-                #3: if stats[hold] > GDConsts.raceStatLimits[race].dexMax then
+                C_Abil.DEXTERITY: if stats[hold] > GDConsts.raceStatLimits[race].dexMax then
                      stats[hold] := GDConsts.raceStatLimits[race].dexMax;
-                #4: begin
+                C_Abil.CONSTITUTION: begin
                      if stats[hold] > GDConsts.raceStatLimits[race].conMax then
                        stats[hold] := GDConsts.raceStatLimits[race].conMax;
                      if CharGen.HpMinimum(GDVars.curChar) > hpMax then
@@ -867,9 +849,9 @@ begin
                      hpCur := hpMax;
                      statIdx := 6;
                      DisplayModifyField(False);
-                     statIdx := CharGen.CONSTITUTION;
+                     statIdx := C_Abil.CONSTITUTION;
                    end;
-                #5: if stats[hold] > GDConsts.raceStatLimits[race].chaMax then
+                C_Abil.CHARISMA: if stats[hold] > GDConsts.raceStatLimits[race].chaMax then
                      stats[hold] := GDConsts.raceStatLimits[race].chaMax;
               end;
             end else
@@ -947,24 +929,24 @@ begin
         Inc(classMask, GDConsts.classBit[cls]);
         atCap := False;
         lvl := classLevels[cls];
-        case Char(race) of
-          Char(C_Race.DWARF): if cls = C_Class.FIGHTER_LEVEL then
+        case race of
+          C_Race.DWARF: if cls = C_Class.FIGHTER_LEVEL then
                if ((lvl = 8) and (stats[C_Abil.STRENGTH] = 17)) or ((lvl = 7) and (stats[C_Abil.STRENGTH] < 17)) then
                  atCap := True;
-          Char(C_Race.ELF): if cls = C_Class.FIGHTER_LEVEL then
+          C_Race.ELF: if cls = C_Class.FIGHTER_LEVEL then
                if (lvl = 7) or ((lvl = 6) and (stats[C_Abil.STRENGTH] = 17)) or ((lvl = 5) and
                    (stats[C_Abil.STRENGTH] < 17)) then
                  atCap := True;
-          Char(C_Race.GNOME): if cls = C_Class.FIGHTER_LEVEL then
+          C_Race.GNOME: if cls = C_Class.FIGHTER_LEVEL then
                if (lvl = 6) or ((lvl = 5) and (stats[C_Abil.STRENGTH] < 18)) then
                  atCap := True;
-          Char(C_Race.HALF_ELF): if (cls = C_Class.CLERIC_LEVEL) and (lvl = 5) then
+          C_Race.HALF_ELF: if (cls = C_Class.CLERIC_LEVEL) and (lvl = 5) then
                atCap := True
              else if cls = C_Class.FIGHTER_LEVEL then
                if (lvl = 8) or ((lvl = 7) and (stats[C_Abil.STRENGTH] = 17)) or ((lvl = 6) and
                    (stats[C_Abil.STRENGTH] < 17)) then
                  atCap := True;
-          Char(C_Race.HALFLING): if cls = C_Class.FIGHTER_LEVEL then
+          C_Race.HALFLING: if cls = C_Class.FIGHTER_LEVEL then
                if (lvl = 6) or ((lvl = 5) and (stats[C_Abil.STRENGTH] = 17)) or ((lvl = 4) and
                    (stats[C_Abil.STRENGTH] < 17)) then
                  atCap := True;
@@ -1054,6 +1036,9 @@ begin
   end;
 end;
 
+{ Adds characters from the CHARLIST.TXT roster to the party, unless already there (same name and randByte): at most six
+  that are not NPCs and eight members in all. Added names are marked with '* ' and the roster is saved back. Note: the
+  menu's Exit flag is never set, so the menu gets an uninitialized value. }
 procedure AddCharacterMenu;
 var
   list: Types.PItemRec;
@@ -1484,10 +1469,10 @@ begin
   with creature^ do
     for cls := 0 to 7 do
       if classLevels[cls] > 0 then begin
-        Inc(bonus, GDConsts.conBonusTbl[stats[CharGen.CONSTITUTION]]);
-        if (stats[CharGen.CONSTITUTION] > 16) and (charClass = C_Class.FIGHTER) then
+        Inc(bonus, GDConsts.conBonusTbl[stats[C_Abil.CONSTITUTION]]);
+        if (stats[C_Abil.CONSTITUTION] > 16) and (charClass = C_Class.FIGHTER) then
           Inc(bonus);
-        if (stats[CharGen.CONSTITUTION] > 17) and (charClass = C_Class.FIGHTER) then
+        if (stats[C_Abil.CONSTITUTION] > 17) and (charClass = C_Class.FIGHTER) then
           Inc(bonus);
       end;
   ConHpBonus := bonus;
@@ -1511,9 +1496,9 @@ begin
       if classLevels[cls] > 0 then begin
         Inc(sum, classLevels[cls]);
         Inc(clsCount);
-        case Char(cls) of
-          Char(CharGen.RANGER_LEVEL): Inc(sum);
-          Char(C_Class.MONK_LEVEL): Inc(sum);
+        case cls of
+          CharGen.RANGER_LEVEL: Inc(sum);
+          C_Class.MONK_LEVEL: Inc(sum);
         end;
       end;
   end;
@@ -1546,15 +1531,15 @@ begin
     for cls := 0 to 7 do
       if classLevels[cls] > 0 then begin
         Inc(clsCount);
-        case Char(cls) of
-          Char(C_Class.CLERIC_LEVEL): Inc(sum, classLevels[cls] * 8);
-          Char(CharGen.DRUID_LEVEL): Inc(sum, classLevels[cls] * 8);
-          Char(C_Class.FIGHTER_LEVEL): Inc(sum, classLevels[cls] * 10);
-          Char(CharGen.PALADIN_LEVEL): Inc(sum, classLevels[cls] * 10);
-          Char(CharGen.RANGER_LEVEL): Inc(sum, (classLevels[cls] + 1) * 8);
-          Char(C_Class.MAGE_LEVEL): Inc(sum, classLevels[cls] * 4);
-          Char(C_Class.THIEF_LEVEL): Inc(sum, classLevels[cls] * 6);
-          Char(C_Class.MONK_LEVEL): Inc(sum, (classLevels[cls] + 1) * 4);
+        case cls of
+          C_Class.CLERIC_LEVEL: Inc(sum, classLevels[cls] * 8);
+          CharGen.DRUID_LEVEL: Inc(sum, classLevels[cls] * 8);
+          C_Class.FIGHTER_LEVEL: Inc(sum, classLevels[cls] * 10);
+          CharGen.PALADIN_LEVEL: Inc(sum, classLevels[cls] * 10);
+          CharGen.RANGER_LEVEL: Inc(sum, (classLevels[cls] + 1) * 8);
+          C_Class.MAGE_LEVEL: Inc(sum, classLevels[cls] * 4);
+          C_Class.THIEF_LEVEL: Inc(sum, classLevels[cls] * 6);
+          C_Class.MONK_LEVEL: Inc(sum, (classLevels[cls] + 1) * 4);
         end;
       end;
   end;

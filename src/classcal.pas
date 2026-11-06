@@ -30,9 +30,6 @@ procedure RecalcSaves(creature: Types.PCharRecord);
   @param(creature The character to update.) }
 procedure RecalcThiefSkills(creature: Types.PCharRecord);
 
-{ Empty routine with no callers. }
-procedure NoopClassCal;
-
 implementation
 
 procedure RecalcClassStats(creature: Types.PCharRecord);
@@ -50,10 +47,10 @@ begin
       creature^.thac0Base := GDConsts.thac0Tbl[i, lvl];
     if creature^.levelHighest < lvl then
       creature^.levelHighest := lvl;
-    case Char(i) of
-      Char(C_Class.FIGHTER_LEVEL):
+    case i of
+      C_Class.FIGHTER_LEVEL:
         if lvl > 6 then creature^.attacks := 3 else creature^.attacks := 2;
-      Char(C_Class.CLERIC_LEVEL):
+      C_Class.CLERIC_LEVEL:
         if lvl > 1 then begin
           { 3 is the last index of clericSpells }
           for k := 1 to 3 do
@@ -65,7 +62,7 @@ begin
               if (castClass = 0) and (creature^.clericSpells[levelSp] > 0) then
                 creature^.spellsKnown[m] := 1;
         end;
-      Char(C_Class.MAGE_LEVEL):
+      C_Class.MAGE_LEVEL:
         if lvl > 1 then
           { 3 is the last index of mageSpells }
           for k := 1 to 3 do
@@ -122,10 +119,6 @@ begin
         if j < 6 then
           thiefSkills[j] := thiefSkills[j] + GDConsts.dexAdj[dexCur, j];
       end;
-end;
-
-procedure NoopClassCal;
-begin
 end;
 
 begin

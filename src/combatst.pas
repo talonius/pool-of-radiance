@@ -4,8 +4,8 @@ unit CombatSt;
 
 interface
 
-uses Types, Crt, C_Area, C_Npc, C_Terr, C_Cond, GDConsts, GDVars, CbtActs, CharGen, FxEngine,
-  MenuCore, Portrait, View3D, CbtMap, MapTiles, CharHlp, Blit, TextRend, GameIo, C_Ifc, C_Gbvm, C_Dir;
+uses Types, Crt, C_Area, C_Npc, C_Terr, C_Cond, GDConsts, GDVars, CbtActs, CharGen, FxEngine, Portrait, View3D,
+  MapTiles, Blit, GameIo, C_Ifc, C_Gbvm, C_Dir, CharHlp, CbtMap, MenuCore, TextRend;
 
 { Starts a battle: releases the animation and portrait pictures, clears the combat state, builds the arena, initializes
   and places the creatures and allocates the moving-icon frames. Then it centers the view on the first creature, draws
@@ -163,43 +163,43 @@ var
       open := 0;
     for k := 1 to 4 do
       case k of
-        1: case Char(wallN) of
-             #0: case Char(wallW) of
-                  #0: topLeft := 22;
-                  #3: topLeft := 13;
-                  #1: if open <> 0 then topLeft := 0 else topLeft := 13;
+        1: case wallN of
+             0: case wallW of
+                  0: topLeft := 22;
+                  3: topLeft := 13;
+                  1: if open <> 0 then topLeft := 0 else topLeft := 13;
                 end;
-             #3, #1: if wallW = 0 then begin
+             3, 1: if wallW = 0 then begin
                      if open <> 0 then topLeft := 15 else topLeft := 5;
                    end else begin
                      if open <> 0 then topLeft := 18 else topLeft := 2;
                    end;
            end;
-        2: case Char(wallN) of
-             #0: topRight := 22;
-             #3: topRight := 17;
-             #1: topRight := 5;
+        2: case wallN of
+             0: topRight := 22;
+             3: topRight := 17;
+             1: topRight := 5;
            end;
-        3: case Char(wallW) of
-             #0: if wallN = 0 then
+        3: case wallW of
+             0: if wallN = 0 then
                   bottomLeft := 22
                 else if open <> 0 then
                   bottomLeft := 16
                 else
                   bottomLeft := 10;
-             #3: if open <> 0 then bottomLeft := 20 else bottomLeft := 7;
-             #1: if open <> 0 then bottomLeft := 1 else bottomLeft := 3;
+             3: if open <> 0 then bottomLeft := 20 else bottomLeft := 7;
+             1: if open <> 0 then bottomLeft := 1 else bottomLeft := 3;
            end;
-        4: case Char(wallW) of
-             #0, #3: case Char(wallN) of
-                     #0: bottomRight := 22;
-                     #3: bottomRight := 23;
-                     #1: bottomRight := 10;
+        4: case wallW of
+             0, 3: case wallN of
+                     0: bottomRight := 22;
+                     3: bottomRight := 23;
+                     1: bottomRight := 10;
                    end;
-             #1: case Char(wallN) of
-                  #0: bottomRight := 13;
-                  #3: bottomRight := 21;
-                  #1: bottomRight := 6;
+             1: case wallN of
+                  0: bottomRight := 13;
+                  3: bottomRight := 21;
+                  1: bottomRight := 6;
                 end;
            end;
       end;
@@ -229,19 +229,19 @@ var
       open := 0;
     for k := 1 to 4 do
       case k of
-        1: case Char(wallN) of
-             #0: if kN = 1 then topLeft := 4 else topLeft := 22;
-             #3: topLeft := 15;
-             #1: topLeft := 5;
+        1: case wallN of
+             0: if kN = 1 then topLeft := 4 else topLeft := 22;
+             3: topLeft := 15;
+             1: topLeft := 5;
            end;
         2: if wallN = 0 then begin
-             case Char(kN) of
-               #0: topRight := 22;
-               #3: if (wallE = 0) and (kE <> 0) then
+             case kN of
+               0: topRight := 22;
+               3: if (wallE = 0) and (kE <> 0) then
                     topRight := 24
                   else
                     topRight := 1;
-               #1: if (wallE = 0) and (kE <> 0) then
+               1: if (wallE = 0) and (kE <> 0) then
                     topRight := 11
                   else
                     topRight := 3;
@@ -256,10 +256,10 @@ var
              else
                topRight := 19;
            end;
-        3: case Char(wallN) of
-             #0: bottomLeft := 22;
-             #3: bottomLeft := 16;
-             #1: bottomLeft := 10;
+        3: case wallN of
+             0: bottomLeft := 22;
+             3: bottomLeft := 16;
+             1: bottomLeft := 10;
            end;
         4: if wallN = 0 then begin
              if kN = 0 then

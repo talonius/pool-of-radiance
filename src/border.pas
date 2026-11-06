@@ -1,5 +1,5 @@
 { Text-window borders, rectangle clearing and centered titles. Borders use the 8x8 symbol set. }
-{$O-,F+}
+{$O+,F+}
 unit Border;
 
 interface

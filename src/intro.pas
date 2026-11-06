@@ -4,7 +4,7 @@ unit Intro;
 
 interface
 
-uses Types, GDConsts, GDVars, Crt, GameIo, TextRend, Blit, Border;
+uses Types, GDConsts, GDVars, Crt, TextRend, Blit, Border, GameIo;
 
 { Shows the title: title picture 1 for 5 seconds or until a key, with the game directory blanked while it loads. With
   the full intro it goes on to title picture 2 for another 5 seconds or until a key, on EGA flashing palette register 1
@@ -38,7 +38,7 @@ begin
   TextRend.DisplayString(2, 3, LightGreen, 'david cook,steve winter,mike breault');
   TextRend.DisplayString(1, 5, LightGreen, 'game created by:');
   TextRend.DisplayString(18, 5, Yellow, 'ssi special projects');
-  TextRend.DisplayString(14, 6, LightCyan, 'version 1.2');
+  TextRend.DisplayString(14, 6, LightCyan, 'version 1.3');
   TextRend.DisplayString(2, 7, Yellow, 'programming:');
   TextRend.DisplayString(20, 7, Yellow, 'original');
   TextRend.DisplayString(2, 8, LightCyan, 'scot bayless');

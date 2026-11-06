@@ -5,8 +5,8 @@ unit Camp;
 
 interface
 
-uses Types, Crt, C_Msg, GDConsts, GDVars, GameIo, TextRend, Border, CharHlp, MenuCore, CharGen, SaveLoad,
-  ViewChar, GameTime, Magic, C_Effect, C_Keys, C_Status, C_Ifc, C_Spell;
+uses Types, Crt, C_Msg, GDConsts, GDVars, CharGen, GameTime, C_Effect, C_Keys, C_Status, C_Ifc, C_Spell, Magic, CharHlp,
+  ViewChar, Border, TextRend, MenuCore, GameIo, SaveLoad;
 
 { Runs the camp menu: Save (then offers to quit to DOS), View, Magic, Rest and Alter; extended keys select the previous
   or next character. Pending spell preparation is cleared on the way in and out, the interface state is kept, and the
@@ -231,9 +231,9 @@ begin
     row := 3;
     for typ := 0 to 1 do begin
       if canDo[typ] <> 0 then begin
-        case Char(typ) of
-          #0: s := '    Cleric Spells:';
-          #1: s := 'Magic-User Spells:';
+        case typ of
+          0: s := '    Cleric Spells:';
+          1: s := 'Magic-User Spells:';
         end;
         TextRend.DisplayString(1, row + 17, LightGreen, s);
         col := 19;

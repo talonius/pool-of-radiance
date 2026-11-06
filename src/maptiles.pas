@@ -8,9 +8,6 @@ interface
 
 uses Types, Crt, C_Tile, GDConsts, GDVars, Blit, GameIo, C_Dir;
 
-{ Empty routine with no callers. }
-procedure NoopMapTiles;
-
 { Loads block 1 of a 24x24 tile set and, when the first tile-set buffer is allocated, copies its tiles into that buffer
   from a starting tile slot, then discards pending keys. A starting slot above 127, the last, restores the video mode
   and exits to DOS with a range error.
@@ -49,10 +46,6 @@ procedure LoadIconAnim(name: string; fileId, animIdx: Byte);
 procedure DrawIconAnimSprite(col, row: ShortInt; facing, frame, animIdx: Byte);
 
 implementation
-
-procedure NoopMapTiles;
-begin
-end;
 
 procedure Load24x24Set(name: string; mult: Byte; slot: ShortInt);
 var

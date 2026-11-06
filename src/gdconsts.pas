@@ -215,33 +215,65 @@ const
      { Monk: d4 }
      4);
   { CHEAD/CBODY filename suffix indexed by iconSize: S for 1 (dwarf, gnome, halfling), T for 2 (tall races). }
-  iconHeightSuffix: array[1..2] of Char = ('S', 'T');
+  iconHeightSuffix: array[1..2] of Char = (
+    'S',
+    'T');
   { Portrait heads for a joining NPC, by gender (male, female) and a 1d8 roll. }
   npcPortraitHeads: array[0..1, 1..8] of Byte = (
     (1, 2, 3, 4, 5, 8, 11, 12),
     (6, 7, 9, 10, 13, 14, 6, 7));
   { Portrait bodies for a joining cleric, by gender (male, female) and a 1d5 roll. }
   npcClericBodies: array[0..1, 1..5] of Byte = (
-    (2, 4, 2, 4, 2), (2, 4, 8, 2, 4));
+    (2, 4, 2, 4, 2),
+    (2, 4, 8, 2, 4));
   { Portrait bodies for a joining fighter, and for any class other than cleric, magic-user and thief, by gender (male,
     female) and a 1d5 roll. }
   npcFighterBodies: array[0..1, 1..5] of Byte = (
-    (1, 3, 4, 5, 6), (7, 9, 11, 7, 9));
+    (1, 3, 4, 5, 6),
+    (7, 9, 11, 7, 9));
   { Portrait bodies for a joining magic-user, by gender (male, female) and a 1d5 roll. }
   npcMageBodies: array[0..1, 1..5] of Byte = (
-    (2, 2, 2, 2, 2), (8, 10, 12, 8, 10));
+    (2, 2, 2, 2, 2),
+    (8, 10, 12, 8, 10));
   { Portrait bodies for a joining thief, by gender (male, female) and a 1d5 roll. }
   npcThiefBodies: array[0..1, 1..5] of Byte = (
-    (6, 6, 6, 6, 6), (8, 10, 8, 10, 8));
+    (6, 6, 6, 6, 6),
+    (8, 10, 8, 10, 8));
   { Wilderness tiles the Yarash ending remaps Black to Blue and LightGray to Green. Bit 7 selects the second tile set
     (tileSetHigh), the low 7 bits the frame. }
   yarBlueGreenTiles: array[0..10] of Byte = (
-    101, 102, 103, 104, 105, 106, 107, 113, 128 + 96, 128 + 97, 128 + 98);
+    101,
+    102,
+    103,
+    104,
+    105,
+    106,
+    107,
+    113,
+    128 + 96,
+    128 + 97,
+    128 + 98);
   { Wilderness tiles the Yarash ending remaps LightGray to Green. Bit 7 selects the second tile set, the low 7 bits the
     frame. }
   yarGreenTiles: array[0..17] of Byte = (
-    86, 87, 88, 89, 108, 109, 110, 111, 112, 114, 115, 116, 117, 118, 119,
-    128 + 95, 128 + 115, 128 + 117);
+    86,
+    87,
+    88,
+    89,
+    108,
+    109,
+    110,
+    111,
+    112,
+    114,
+    115,
+    116,
+    117,
+    118,
+    119,
+    128 + 95,
+    128 + 115,
+    128 + 117);
   { Source side of both Yarash remaps: every color, in palette order. }
   yarRemapFrom: Types.TColorTab = (
     Black,
@@ -330,10 +362,26 @@ const
     White);
   { Left column of the wilderness view for each step of the Yarash ending. }
   yarViewX: array[0..8] of Word = (
-    17, 17, 17, 19, 19, 19, 23, 23, 23);
+    17,
+    17,
+    17,
+    19,
+    19,
+    19,
+    23,
+    23,
+    23);
   { Top row of the wilderness view for each step of the Yarash ending. }
   yarViewY: array[0..8] of Word = (
-    15, 15, 15, 20, 20, 20, 25, 25, 25);
+    15,
+    15,
+    15,
+    20,
+    20,
+    20,
+    25,
+    25,
+    25);
 
 { Random treasure items and the spell list headings. }
 const
@@ -341,45 +389,64 @@ const
   randomItemTemplates: Types.TRandomItemTable = (
     templates: (
       { Template 1 (word index 1): Potion of Extra Healing }
-      (nameIds: (187, 167, 64); weight: 1; value: 800; properties: (3, 3, 0)),
+      (nameIds: (187, 167, 64); weight: 1; value: 800;
+       properties: (3, 3, 0)),
       { Template 2 (word index 9): Potion of Giant Strength }
-      (nameIds: (239, 167, 64); weight: 1; value: 1100; properties: (1, 82, 0)),
+      (nameIds: (239, 167, 64); weight: 1; value: 1100;
+       properties: (1, 82, 0)),
       { Template 3 (word index 17): Potion of Healing }
-      (nameIds: (185, 167, 64); weight: 1; value: 400; properties: (1, 85, 0)),
+      (nameIds: (185, 167, 64); weight: 1; value: 400;
+       properties: (1, 85, 0)),
       { Template 4 (word index 25): Potion of Speed }
-      (nameIds: (173, 167, 64); weight: 1; value: 450; properties: (1, 80, 0)),
+      (nameIds: (173, 167, 64); weight: 1; value: 450;
+       properties: (1, 80, 0)),
       { Template 5 (word index 33): Scroll of Restoring Levels }
-      (nameIds: (240, 167, 65); weight: 1; value: 2100; properties: (56, 56, 0)),
+      (nameIds: (240, 167, 65); weight: 1; value: 2100;
+       properties: (56, 56, 0)),
       { Template 6 (word index 41): Ring of Feather Falling }
-      (nameIds: (238, 167, 66); weight: 1; value: 5000; properties: (0, 27, 128)),
+      (nameIds: (238, 167, 66); weight: 1; value: 5000;
+       properties: (0, 27, 128)),
       { Template 7 (word index 49): Wand of Lightning }
-      (nameIds: (157, 167, 69); weight: 1; value: 6000; properties: (20, 51, 0)),
+      (nameIds: (157, 167, 69); weight: 1; value: 6000;
+       properties: (20, 51, 0)),
       { Template 8 (word index 57): Wand of Magic Missiles }
-      (nameIds: (206, 167, 69); weight: 1; value: 11000; properties: (30, 88, 0)),
+      (nameIds: (206, 167, 69); weight: 1; value: 11000;
+       properties: (30, 88, 0)),
       { Template 9 (word index 65): Wand of Paralyzation }
-      (nameIds: (225, 167, 69); weight: 1; value: 5000; properties: (20, 84, 0)),
+      (nameIds: (225, 167, 69); weight: 1; value: 5000;
+       properties: (20, 84, 0)),
       { Template 10 (word index 73): Gauntlets of Ogre Power }
-      (nameIds: (226, 167, 100); weight: 10; value: 15000; properties: (0, 38, 131)),
+      (nameIds: (226, 167, 100); weight: 10; value: 15000;
+       properties: (0, 38, 131)),
       { Template 11 (word index 81): Keoghtum's Ointment }
-      (nameIds: (0, 111, 182); weight: 1; value: 10000; properties: (5, 81, 0)),
+      (nameIds: (0, 111, 182); weight: 1; value: 10000;
+       properties: (5, 81, 0)),
       { Template 12 (word index 89): Necklace of Missiles }
-      (nameIds: (228, 167, 119); weight: 1; value: 16000; properties: (20, 87, 0)),
+      (nameIds: (228, 167, 119); weight: 1; value: 16000;
+       properties: (20, 87, 0)),
       { Template 13 (word index 97): Cloak of Displacement }
-      (nameIds: (170, 167, 88); weight: 25; value: 17500; properties: (0, 89, 133)),
+      (nameIds: (170, 167, 88); weight: 25; value: 17500;
+       properties: (0, 89, 133)),
       { Template 14 (word index 105): Javelin of Lightning }
-      (nameIds: (157, 167, 21); weight: 20; value: 3000; properties: (1, 83, 0)),
+      (nameIds: (157, 167, 21); weight: 20; value: 3000;
+       properties: (1, 83, 0)),
       { Template 15 (word index 113): Wand of Fireballs }
-      (nameIds: (242, 167, 69); weight: 1; value: 5000; properties: (20, 47, 0)),
+      (nameIds: (242, 167, 69); weight: 1; value: 5000;
+       properties: (20, 47, 0)),
       { Template 16 (word index 121): Ring of Fire Resistance }
-      (nameIds: (205, 167, 66); weight: 1; value: 5000; properties: (0, 61, 129)),
+      (nameIds: (205, 167, 66); weight: 1; value: 5000;
+       properties: (0, 61, 129)),
       { Template 17 (word index 129): Ring of Invisibility }
-      (nameIds: (227, 167, 66); weight: 1; value: 7500; properties: (0, 56, 139)),
+      (nameIds: (227, 167, 66); weight: 1; value: 7500;
+       properties: (0, 56, 139)),
       { Template 18 (word index 137): Bag of Holding }
-      (nameIds: (186, 167, 73); weight: 150; value: 25000; properties: (0, 0, 0)),
+      (nameIds: (186, 167, 73); weight: 150; value: 25000;
+       properties: (0, 0, 0)),
       { Template 19 (word index 145): Cloak of Elvenkind }
-      (nameIds: (229, 167, 88); weight: 25; value: 6000; properties: (0, 72, 134))));
+      (nameIds: (229, 167, 88); weight: 25; value: 6000;
+       properties: (0, 72, 134))));
   { Spell list headings, by spell level. }
-  spellLevelNames: array[1..9] of string[40] = (
+  spellLevelNames: array[1..9] of String[40] = (
     '1st Level',
     '2nd Level',
     '3rd Level',
@@ -395,14 +462,44 @@ const
 const
   { Effects removed by RemoveEffectsHp0 when a creature reaches zero hit points or is put out of play. }
   hpZeroEffects: array[1..16] of Byte = (
-    C_Effect.TRAINING_MANUAL, C_Effect.CHARM, C_Effect.STINKING_CLOUD_COUGH, C_Effect.HELPLESS,
-        C_Effect.ANIMATE_DEAD, C_Effect.SNAKE_CHARM, C_Effect.PARALYSIS,
-    C_Effect.SLEEP, C_Effect.DRAGON_AURA, C_Effect.IMMOBILE, C_Effect.TROLL_REGENERATION,
-        C_Effect.FIGHT_ON, C_Effect.REGENERATION, C_Effect.SPIRITUAL_HAMMER_GONE,
-    C_Effect.BITE_HOLD, C_Effect.BLOOD_DRAIN);
+    { Training/Manual }
+    C_Effect.TRAINING_MANUAL,
+    { Charm }
+    C_Effect.CHARM,
+    { Stinking cloud coughing }
+    C_Effect.STINKING_CLOUD_COUGH,
+    { Helpless (nausea) }
+    C_Effect.HELPLESS,
+    { Animate Dead }
+    C_Effect.ANIMATE_DEAD,
+    { Snake Charm }
+    C_Effect.SNAKE_CHARM,
+    { Paralysis (Hold Person) }
+    C_Effect.PARALYSIS,
+    { Sleep }
+    C_Effect.SLEEP,
+    { Dragon Aura }
+    C_Effect.DRAGON_AURA,
+    { Immobile }
+    C_Effect.IMMOBILE,
+    { Troll Regeneration }
+    C_Effect.TROLL_REGENERATION,
+    { Fight On at 0 HP }
+    C_Effect.FIGHT_ON,
+    { Regeneration }
+    C_Effect.REGENERATION,
+    { Spiritual Hammer expiry }
+    C_Effect.SPIRITUAL_HAMMER_GONE,
+    { Bite-and-Hold }
+    C_Effect.BITE_HOLD,
+    { Blood Drain }
+    C_Effect.BLOOD_DRAIN);
   { Effects removed by RemoveAiEffects at the start of CombatAi.CheckMorale. }
   aiRoundRemoveEffects: array[1..2] of Byte = (
-    C_Effect.BITE_HOLD, C_Effect.BLOOD_DRAIN);
+    { Bite-and-Hold }
+    C_Effect.BITE_HOLD,
+    { Blood Drain }
+    C_Effect.BLOOD_DRAIN);
   { Display color for each sky and ceiling selector of a zone; selectors 8..15 repeat 0..7. }
   skyCeilingColors: array[0..15] of Byte = (
     Black,
@@ -982,14 +1079,45 @@ const
     $0000, $5555, $AAAA, $FFFF);
   { EGA-to-CGA font color map. }
   attrTable: array[0..15] of Byte = (
-    0, 0, 0, 1, 2, 2, 2, 3, 3, 1, 1, 1, 2, 2, 3, 3);
+    { EGA 0 Black -> CGA color 0 }
+    0,
+    { EGA 1 Blue -> CGA color 0 }
+    0,
+    { EGA 2 Green -> CGA color 0 }
+    0,
+    { EGA 3 Cyan -> CGA color 1 }
+    1,
+    { EGA 4 Red -> CGA color 2 }
+    2,
+    { EGA 5 Magenta -> CGA color 2 }
+    2,
+    { EGA 6 Brown -> CGA color 2 }
+    2,
+    { EGA 7 LightGray -> CGA color 3 }
+    3,
+    { EGA 8 DarkGray -> CGA color 3 }
+    3,
+    { EGA 9 LightBlue -> CGA color 1 }
+    1,
+    { EGA 10 LightGreen -> CGA color 1 }
+    1,
+    { EGA 11 LightCyan -> CGA color 1 }
+    1,
+    { EGA 12 LightRed -> CGA color 2 }
+    2,
+    { EGA 13 LightMagenta -> CGA color 2 }
+    2,
+    { EGA 14 Yellow -> CGA color 3 }
+    3,
+    { EGA 15 White -> CGA color 3 }
+    3);
   { One mask per 2-bit pixel position within a CGA pixel word, high pair first. Blit uses them to isolate, place and
     reflect CGA pixels; TextRend.RenderChar uses them to draw characters. }
   cgaPixelMask: array[0..7] of Word = (
     $C000, $3000, $0C00, $0300, $00C0, $0030, $000C, $0003);
 
 { Video plane and pixel tables, sound command ids, disk prompts, symbol-set ranges, direction steps, combat terrain and
-  icon footprints, portrait tables and keypad codes. }
+  icon footprints, portrait tables, keypad codes and aim vectors, spells, rest time units and the wilderness map. }
 const
   { Color bit (1, 2, 4, 8) carried by each of the four EGA planes. Blit uses it to split a 4-bit color into plane bytes
     and to select planes through the sequencer map mask. }
@@ -1003,7 +1131,22 @@ const
   { Packed EGA-to-CGA color map, two EGA colors per byte, used by Blit.FillPicRect for the CharGen icon previews and the
     View3D backgrounds }
   iconColorMap: Types.TColorMap = (
-    $00, $11, $22, $12, $00, $21, $30, $33);
+    { EGA 0 Black -> CGA 0; EGA 1 Blue -> CGA 0 }
+    $00,
+    { EGA 2 Green -> CGA 1; EGA 3 Cyan -> CGA 1 }
+    $11,
+    { EGA 4 Red -> CGA 2; EGA 5 Magenta -> CGA 2 }
+    $22,
+    { EGA 6 Brown -> CGA 1; EGA 7 LightGray -> CGA 2 }
+    $12,
+    { EGA 8 DarkGray -> CGA 0; EGA 9 LightBlue -> CGA 0 }
+    $00,
+    { EGA 10 LightGreen -> CGA 2; EGA 11 LightCyan -> CGA 1 }
+    $21,
+    { EGA 12 LightRed -> CGA 3; EGA 13 LightMagenta -> CGA 0 }
+    $30,
+    { EGA 14 Yellow -> CGA 3; EGA 15 White -> CGA 3 }
+    $33);
   { Sound command ids in one table: the three subsystems read their own slice. }
   soundIds: record
     commands: array[0..3] of Word;
@@ -1115,12 +1258,25 @@ const
   { BODY DAX id of each portraitBody. }
   bodyTbl: array[1..12] of Byte = (
     1, 2, 3, 4, 7, 8, 18, 24, 26, 33, 35, 37);
+  { unused }
+  bodyTblTail: array[0..1] of Byte = (
+    0, 1);
   { Scan codes of the keypad digits 1..9; MenuCore indexes it by Ord(ch) - Ord('1'). }
   keypadScan: array[0..8] of Byte = (
     79, 80, 81, 75, 32, 77, 71, 72, 73);
-
-{ Spells, rest time units and the wilderness map. }
-const
+  { Arrow-key scan code (72 up, 75 left, 77 right, 80 down) for an aim vector, rows Y, columns X; unused }
+  vectorScan: array[-5..5, -5..5] of Byte = (
+    (72, 72, 72, 72, 72, 72, 72, 72, 72, 72, 72),
+    (75, 72, 72, 72, 72, 72, 72, 72, 72, 72, 77),
+    (75, 75, 72, 72, 72, 72, 72, 72, 72, 77, 77),
+    (75, 75, 75, 72, 72, 72, 72, 72, 77, 77, 77),
+    (75, 75, 75, 75, 72, 72, 72, 77, 77, 77, 77),
+    (75, 75, 75, 75, 75, 72, 77, 77, 77, 77, 77),
+    (75, 75, 75, 75, 80, 80, 80, 77, 77, 77, 77),
+    (75, 75, 75, 80, 80, 80, 80, 80, 77, 77, 77),
+    (75, 75, 80, 80, 80, 80, 80, 80, 80, 77, 77),
+    (75, 80, 80, 80, 80, 80, 80, 80, 80, 80, 77),
+    (80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80));
   { Directions a Stinking Cloud covers: center, east, southeast and south. }
   cloudDir: array[1..4] of Byte = (
     8, 2, 3, 4);
@@ -1612,6 +1768,13 @@ const
     (40, 40, 40, 40, 40, 40, 41, 41, 41, 41, 41),
     (40, 40, 40, 40, 40, 41, 41, 41, 41, 44, 44),
     (40, 40, 40, 40, 42, 42, 42, 44, 44, 44, 46));
+  { Krynn data SSI left behind (not all of its Krynn declarations were compiled out); PoR never uses it. }
+  krynnClassRules: Types.TKrynnClassRules = (
+    createClassBits: ($02, $20, $08, $40, $80, $01, $04, $10);
+    afterCreateClassBits: 0;
+    classBits: ($02, $02, $08, $10, $20, $01, $04, $10);
+    afterClassBits: ($10, $10, $10, $20, $20, $20, $40, $40, $40);
+    maxClassLevels: (10, 15, 10, 10, 11, 12, 11, 10));
   { Palette slots of the six recolorable parts of a combat icon; the recolors land in these slots and the slot 8
     higher. }
   defIconCol: array[1..6] of Byte = (1, 2, 3, 4, 6, 7);

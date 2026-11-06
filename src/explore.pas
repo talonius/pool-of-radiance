@@ -4,9 +4,8 @@ unit Explore;
 
 interface
 
-uses Types, Crt, C_Area, C_Time, C_Msg, GDConsts, GDVars, SoundDrv, TextRend, Border, CharHlp,
-  Blit, MenuCore, Portrait, Camp, ViewChar, GameTime, FxEngine, View3D, MapTiles, C_Ecl, C_Keys, C_Class, C_Status,
-  C_Gbvm, C_Dir, C_Sound;
+uses Types, Crt, C_Area, C_Time, C_Msg, GDConsts, GDVars, SoundDrv, Camp, ViewChar, View3D, MapTiles, C_Ecl, C_Keys,
+  C_Class, C_Status, C_Gbvm, C_Dir, C_Sound, FxEngine, GameTime, TextRend, MenuCore, CharHlp, Border, Portrait, Blit;
 
 { Moves the party in the direction it faces, unless movement is locked (MOVE_LOCKED 255), which instead clears the lock.
   On the 3D map an open way (barrier type 1) steps forward. A door (type 2 or 3) offers a Locked menu built from the

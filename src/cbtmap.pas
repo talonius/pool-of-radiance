@@ -5,10 +5,7 @@ unit CbtMap;
 
 interface
 
-uses Types, Crt, C_Terr, GDConsts, GDVars, MapTiles, Blit, TextRend, SoundDrv, C_Ifc, C_Dir;
-
-{ Empty routine with no callers. }
-procedure NoopCbtMap;
+uses Types, Crt, C_Terr, GDConsts, GDVars, MapTiles, TextRend, SoundDrv, C_Ifc, C_Dir, Blit;
 
 { Finds where one tile of a creature icon lies relative to the icon's upper-left cell.
   @param(size The icon size; 0 for no icon.)
@@ -18,20 +15,11 @@ procedure NoopCbtMap;
   @returns(True when the icon uses the tile; False for size 0 or an unused tile, whose column offset is negative.) }
 function GetIconTileDelta(size, idx: Byte; var dx, dy: ShortInt): Boolean;
 
-{ Recomputes each arena creature's view coordinates from its arena cell and the view's upper-left cell. }
-procedure CalcGridDeltas;
-
 { Exchanges palette registers 0 and 8 (black and dark gray) for combat on EGA. }
 procedure SetCombatPalette;
 
 { Restores palette registers 0 and 8 after combat on EGA. }
 procedure SetNoncombatPalette;
-
-{ Repaints the terrain under the cursor's footprint at an arena cell, draws the cursor there when it is on, then redraws
-  the creature standing on the cell if it is visible.
-  @param(x Arena column of the cell.)
-  @param(y Arena row of the cell.) }
-procedure DrawCursorCell(x, y: ShortInt);
 
 { Redraws one arena cell: repaints its terrain (the whole icon footprint when a creature stands there, through
   UpdateCombatMapTile), then the creature's sprite if it is visible.
@@ -144,15 +132,6 @@ function IsValidCreatureLoc(creature: Types.PCharRecord; x, y: Byte; moving: Boo
   @param(cursor True to draw the cursor.) }
 procedure DisplayMapViewCentered(creature: Types.PCharRecord; delta: Byte; cursor: Boolean);
 
-{ Moves the view and repaints its terrain into the view buffer when a cell lies outside the band around the view's
-  center. The center moves toward the cell, kept where the whole 7x7 view stays inside the arena, and the creatures'
-  view coordinates are recomputed.
-  @param(x Arena column of the cell.)
-  @param(y Arena row of the cell.)
-  @param(delta How far the cell may lie from the view center; 255 forces a full redraw.)
-  @returns(True when the view was redrawn.) }
-function BuildViewBuffer(x, y: ShortInt; delta: Byte): Boolean;
-
 implementation
 
 const
@@ -169,6 +148,7 @@ begin
     GetIconTileDelta := True;
 end;
 
+{ Recomputes each arena creature's view coordinates from its arena cell and the view's upper-left cell. }
 procedure CalcGridDeltas;
 var
   i: Byte;
@@ -199,6 +179,10 @@ begin
   end;
 end;
 
+{ Repaints the terrain under the cursor's footprint at an arena cell, draws the cursor there when it is on, then redraws
+  the creature standing on the cell if it is visible.
+  @param(x Arena column of the cell.)
+  @param(y Arena row of the cell.) }
 procedure DrawCursorCell(x, y: ShortInt);
 var
   relX: ShortInt;
@@ -338,6 +322,13 @@ begin
     end;
 end;
 
+{ Moves the view and repaints its terrain into the view buffer when a cell lies outside the band around the view's
+  center. The center moves toward the cell, kept where the whole 7x7 view stays inside the arena, and the creatures'
+  view coordinates are recomputed.
+  @param(x Arena column of the cell.)
+  @param(y Arena row of the cell.)
+  @param(delta How far the cell may lie from the view center; 255 forces a full redraw.)
+  @returns(True when the view was redrawn.) }
 function BuildViewBuffer(x, y: ShortInt; delta: Byte): Boolean;
 var
   d: Byte;
@@ -614,10 +605,6 @@ begin
   CbtMap.ScrollView(CbtMap.CombatCellX(creature), CbtMap.CombatCellY(creature), delta, C_Dir.CENTER);
   GDVars.arenaPtr^.cursorOn := False;
   GDVars.arenaPtr^.cursorSize := 1;
-end;
-
-procedure NoopCbtMap;
-begin
 end;
 
 begin

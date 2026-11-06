@@ -4,8 +4,8 @@ unit GameInit;
 
 interface
 
-uses Types, Crt, C_Area, C_Video, GDConsts, GDVars, SoundDrv, DaxIo, TextRend,
-  Blit, Sym8x8, MenuCore, MapTiles, Magic, EffHndlr, C_Dir, C_Gbvm;
+uses Types, Crt, C_Area, C_Video, GDConsts, GDVars, Sym8x8, MapTiles, Magic, EffHndlr, C_Dir, DaxIo, C_Gbvm, Blit,
+  SoundDrv, TextRend, MenuCore;
 
 { Starts a game session: allocates the GBVM zones and graphics buffers, builds the per-row video address tables, resets
   the game state to its defaults and sets the sound auto-stop, then loads the font, symbol sets, tile sets, combat icons

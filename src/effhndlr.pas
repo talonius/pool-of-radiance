@@ -6,11 +6,753 @@ unit EffHndlr;
 
 interface
 
-uses Types, C_Item, C_Npc, C_Terr, C_Save, C_Cond, GDConsts, GDVars, CbtActs, ClassCal, FxEngine,
-  Debug, Pathing, CbtMap, CharHlp, TextRend, C_Effect, C_Equip, C_Race, C_Class, C_Status, C_Ifc, C_Align;
+uses Types, C_Item, C_Npc, C_Terr, C_Save, C_Cond, GDConsts, GDVars, CbtActs, ClassCal, FxEngine, Debug, C_Effect,
+  C_Equip, C_Race, C_Class, C_Status, C_Ifc, C_Align, CharHlp, CbtMap, TextRend, Pathing;
 
 { Install the effect handlers in GDVars.effectFns. Magic installs slot 88 (dragon breath) itself. }
 procedure InitEffectHandlers;
+
+{ Bless (effect 1): adds 5 to the morale and 1 to the attack roll.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffBless(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Curse (effect 2): takes 5 off the morale, not below 0, and 1 off the attack roll.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffCurse(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Undead-slaying weapon (effect 3): against an undead target, adds 2 to the attack roll and the damage.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffUndeadSlayer(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Starting training with a Manual of Bodily Health (effect 4): adds the training effect for 43200 minutes.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffTrainStart(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Flame Tongue weapon (effect 6): against its target adds 1 to the attack roll and damage of a regenerating creature, 2
+  of a cold-based or avian one and 3 of an undead one, and makes the damage magical fire.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffFlameTongue(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Manual of Bodily Health training done (effect 7): Constitution rises by 1; at 20 or more it adds regeneration (effect
+  62) for 60 minutes instead. From Constitution 15 the hit points gained above the rolled hit points are divided by the
+  Constitution bonus summed over the class levels (at least 1) and added to the maximum and current hit points when
+  Constitution is below 17 or the creature has fighter levels.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffTrainManual(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Protection from Evil (effects 8 and 45): against an evil attacker, adds 2 to the saving throw and takes 2 off the
+  attack roll.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffProtEvil(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Protection from Good (effects 9 and 46): against a good attacker, adds 2 to the saving throw and takes 2 off the
+  attack roll.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffProtGood(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Resist Cold (effect 10): against cold, halves the damage and adds 3 to the saving throw.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffResistCold(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Charm (effect 11): the first time, the creature changes to the charmer's side, fights automatically and becomes an
+  animated party member if it was one of the party; the strength keeps the applied mark (bit 5), the old side (bit 6)
+  and the charmer's side (bit 7). Each time the morale becomes 100. Removal restores the old side.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed True when the effect is being removed.) }
+procedure EffCharm(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Enlarge and Strength (effects 12 and 38): sets Strength to the value this node holds, then applies the strongest other
+  Enlarge or Strength node, which takes over the Strength to restore. A node whose strength is above $7F is ignored.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffExtraStr(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Friends (effect 14): sets Charisma to the node's strength.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffFriends(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Slow Poison's damage (effect 15): unless the effect lock is on, it re-arms for 10 minutes and deals 1 damage while the
+  creature has more than 1 hit point.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffSlowPoisonHit(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Read Magic (effect 16): does nothing here; scroll reading checks for the effect.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffReadMagic(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Shield (effect 17): the armor class becomes at least 3, the saving throw gains 1, and Magic Missile does no damage.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffShield(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Gnome attack bonus (effect 18): adds 1 to the attack roll against a gnome's foe of size 1.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffGnomeAttackBonus(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Resist Fire (effect 20): against fire, halves the damage and adds 3 to the saving throw.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffResistFire(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Silence 15' (effect 21): the creature can neither use items nor cast this round, and says it is silenced the first
+  time.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffSilence(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Slow Poison running out (effect 22): a creature still poisoned dies, and Slow Poison's damage effect is removed under
+  the effect lock.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffSlowPoisonEnd(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Spiritual Hammer (effect 23): removal deletes the hammer; otherwise a +1 hammer is created when the creature has none
+  and fewer than 16 items.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed True when the effect is being removed.) }
+procedure EffSpiritualHammer(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Invisibility (effect 25): the attacker cannot target the creature unless it sees invisible, and the attack roll loses
+  4.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffInvisible(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Dwarf attack bonus (effect 26): adds 1 to the attack roll against a dwarf's foe of size 1.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffDwarfAttackBonus(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Mirror Image (effect 28): against a single-target spell, an image takes it unless 1d(images + 1) rolls 1; the strength
+  counts the images left, and the effect goes with the last.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffMirrorImage(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Ray of Enfeeblement (effect 29): the damage loses a quarter, rounded down.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffEnfeeble(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Coughing in a stinking cloud (effect 30): the creature can neither use items nor cast this round, says it is coughing
+  the first time, and its armor class worsens by 2, to the armor class from behind.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffCoughing(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Animate Dead (effect 32), on removal of the animation: the creature collapses dead unless the effect lock is on, and
+  returns to its old side as an ordinary creature.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffAnimateDead(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Blindness (effect 33): the attack roll, armor class, armor class from behind and saving throw each lose 4.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffBlind(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Diseased (effect 34): runs the Strength and hit-point disease handlers.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed True when the effect is being removed.) }
+procedure EffDiseased(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Prayer for the caster's side (effect 35): adds 1 to the saving throw and the attack roll.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffAlliedPrayer(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Bestow Curse (effect 36): the attack roll and the saving throw lose 4.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffBestowCurse(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Blink (effect 37): while the creature has initiative left, it cannot be targeted and attacks on it miss.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffBlinking(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Haste (effect 39): the creature ages a year the first time (bit 4 of the strength marks that), and its movement or
+  attacks double.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffHasted(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Stinking Cloud running out (effect 40): the cloud this caster made, numbered by the strength's upper nibble, is
+  removed, its cells get their terrain back or a corpse mark, and the remaining clouds are drawn again.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffClearStinkingCloud(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Protection from Normal Missiles (effect 41): a missile from a weapon with no plus is avoided.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffProtNormalMissiles(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Slow (effect 42): the movement or attacks halve.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffSlowed(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ The Strength-draining disease (effect 43): unless the effect lock is on, it re-arms for 60 minutes and the creature
+  loses 1 Strength, or at Strength 3 becomes helpless.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffDiseaseStrength(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ The hit-point disease (effect 44): unless the effect lock is on, it re-arms for 10 minutes and deals 1 damage, or at 1
+  hit point the creature becomes helpless.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffDiseaseHitPoints(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Dwarf and gnome defense against giants (effect 47): the attack roll loses 4 when a size-2 attacker is one of the
+  giants. Note: the comparison reads eight names from the five-name giant table, the last three from the storage after
+  it.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffDwarfGiantDefense(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Gnome defense against bugbears and gnolls (effect 48): the attack roll loses 4 against such an attacker.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffGnomeAcBug(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Prayer (effect 49): creatures on the caster's side (bit 4 of the strength) get the allied bonus, the others lose 1 on
+  the attack roll and saving throw.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed True when the effect is being removed.) }
+procedure EffPrayer(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Mummy rot's block on healing (effect 50): unless the effect lock is on, it re-arms for 14400 minutes and restores 1
+  hit point through the block.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffRotNoHeal(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Helplessness (effects 31, 51, 52 and 53): ends the creature's actions.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffHelpless(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Dragon aura (effect 54): does nothing; the effect only marks the creature, shown in camp as repulsed.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffDragonAura(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Poisoned (effect 55): does nothing; other code checks for the effect.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffPoisoned(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Wearing a Ring of Invisibility (effect 56): renews invisibility for a minute.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffRenewInvisibility(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Mummy rot (effect 57): each time costs 2 Charisma, not below 3; while the countdown in the strength's upper nibble is
+  above 1 it counts down and re-arms for 43200 minutes, and then the creature rots away. Nothing happens under the
+  effect lock.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffMummyRot(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Immobility (effect 58): the creature has no movement.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffImmobile(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ A troll's regeneration starting (effect 59): adds lasting regeneration (effect 98).
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffTrollRegen(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Ring of Fire Resistance (effect 61): against fire the damage loses 2 a die, at least 1 a die, the saving throw gains
+  4, and fire that is not magical is nullified.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffRingFireRes(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Regeneration from high Constitution (effect 62): unless the effect lock is on, it re-arms for 60 minutes and restores
+  1 hit point.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffConRegeneration(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Poison on a hit (effect 64): the target saves at +0.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffPoisonAttack(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Weak poison on a hit (effect 65): the target saves at +4.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffWeakPoisonAttack(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Mild poison on a hit (effect 66): the target saves at +2.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffMildPoisonAttack(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Thri-kreen paralysis on a hit (effect 67): 2d8 minutes.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffParalyzingHit(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Ghoul paralysis on a hit (effect 68): 63 minutes, not against elves.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffGhoulPara(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Drider paralysis on a hit (effect 69): 1d9+10 minutes. Note: the -2 save modifier is passed but not used.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffDriderPara(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Strong poison on a hit (effect 70): the target saves at -2.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffStrongPoisonAttack(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Dust of Disappearance (effect 71): the creature cannot be targeted, and the attack roll loses 4.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffDustDisappear(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Camouflage and the Cloak of Elvenkind (effect 72): 95 percent of the time, invisibility for a minute.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffCamouflage(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Draining blood (effect 75): the creature drains 1d4 from its victim, the strength being the victim's combat slot and
+  the duration's upper bits the damage left, ending its actions; the drain ends when the budget runs out or the victim
+  drops. On removal, or when either side is down, the victim is freed, and a creature still up with its victim up flees.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed True when the effect is being removed.) }
+procedure EffBloodDrain(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Attaching to drain blood (effect 76): the attacker starts draining its target, with 12 to drain, and the target is
+  held still.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffBloodAttach(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Biting and holding on (effect 77): the attacker starts holding its target, which is held still, unless the target has
+  Strength 19 or more.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffBiteHold(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Waking when healed (effect 78): the creature revives with its current hit points, or tries again in a minute.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffDelayedRevival(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Fire on a hit (effect 79): 2d10 magical fire damage to the target.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffFireTouch(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Acid on a hit (effect 80): 1d4 acid damage to the target.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffAcidTouch(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Dragon fear (effect 81): each enabled enemy saves against spells or, by its highest level, is paralyzed with fear for
+  good (0 to 3) or cursed (4 and 5); level 6 and above is unaffected.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffDragonFear(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Mummy fear (effect 82): the effect is removed from each creature, the mummy's own included; each enabled enemy then
+  saves against paralysis, at +1 when its team has six members or more and +2 when human, or is paralyzed with fear for
+  1d4 minutes.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffMummyFear(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Petrifying gaze (effect 83): the target saves against petrification or is stoned. When the gaze can be reflected
+  (effect 127), a readied Mirror turns it back on the gazer.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffPetrifyingGaze(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Charming gaze (effect 84): with a clear line to a target it may attack, the target is charmed as by Charm Person,
+  saving against spells at -2, with no spell or action used.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffCharmGaze(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Draining a level on a hit (effect 85).
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffDrainOne(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Draining two levels on a hit (effect 86).
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffDrainTwo(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Mummy rot on a hit (effect 87): unless the target already has it, it gets the healing block (effect 50) and the rot
+  (effect 57) with a countdown of 1d6.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffRotTouch(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Displacement (effect 89): the first attack on the creature each round misses; bit 4 of the strength marks that it has
+  been used, cleared at the start of the battle.
+  @param(creature Unused.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffDisplaced(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Constitution's save bonus against poison (effect 90): 1 to 5 by Constitution. Note: outside Constitution 4 to 20 the
+  bonus is unset.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffConPsnSave(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Immunity to electricity and Magic Missile (effect 91).
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffImmuneMagicMissile(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Half damage from fire (effect 93).
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffHalfFire(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Half damage from blunt and piercing weapons (effect 94).
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffHalfBash(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Fighting on at 0 hit points (effect 95): when it runs out, a creature still fighting falls dead.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffFightOn(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Immunity to weapons neither magical nor silver, and to attacks without a weapon (effect 96).
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffNeedSilver(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Constitution's save bonus against spells and wands (effect 97): 1 to 5 by Constitution. Note: outside Constitution 4
+  to 20 the bonus is unset.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffConSpellSave(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Regeneration (effect 98): 3 hit points a round, up to the maximum.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffRegeneration(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Being able to fight on (effect 99): a dying creature less than 6 below 0, or an unconscious one, revives and fights on
+  (effect 95) for 1d4+1 minutes, and this effect goes.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffCanFightOn(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ A troll's vulnerability to fire and acid (effect 100): damage of any other kind brings it back (effect 102) in 3d6
+  minutes.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffTrollBurn(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ A troll's regeneration (effect 101): unless it already regenerates, regeneration starts in 3 minutes (effect 59).
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffTrollHeal(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ A troll coming back (effect 102): it revives at full hit points, or tries again in a minute.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffTrollReturn(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Gaseous form (effect 103): the creature escapes and is taken out of play as fled.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffGaseous(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Thri-kreen missile dodging (effect 104): a 60 percent chance to avoid a missile.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffDodgeMissiles(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Magic resistance of 50 percent (effect 105).
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffStrongMagicResistance(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Magic resistance (effect 106). Note: it passes 15, so it resists 15 percent, not 85, against an 11th-level caster.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffWeakMagicResistance(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ An elf's 90 percent resistance to sleep and charm (effect 107).
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffElfResistance(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Immunity to sleep and charm (effect 108).
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffImmuneSleepCharm(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Immunity to paralysis (effect 109).
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffImmuneParalysis(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Immunity to cold (effect 110).
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffNoCold(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Immunity to paralysis and poison (effect 111): saves against paralysis and poison succeed.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffImmuneParalysisPoison(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Immunity to fire (effect 112).
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffNoFire(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ An efreeti's fire resistance (effect 113): fire damage loses 1 a die, at least 1 a die.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffEfreetiFire(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Half damage from electricity (effect 114).
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffHalfElec(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Half damage from slashing and piercing weapons (effect 115).
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffHalfSlashPierce(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Half damage from magical weapons (effect 116).
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffHalfMagicWeapon(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Vulnerability to holy water (effect 117): a holy water vial does 1d6+1.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffHolyWater(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Half damage from cold (effect 118).
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffHalfCold(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Immunity to weapons that are not magical, and to attacks without a weapon (effect 119), against a character race or an
+  attacker below level 4.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffNeedMagicWeapon(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Dodging boulders (effect 120): a 50 percent chance to avoid a thrown boulder.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffDodgeBoulders(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ An ankheg's acid spit (effect 121): a 25 percent chance against a target within 4 cells, 8d4 acid, half on a save
+  against breath; the creature's actions end and the effect removes itself and the acid touch.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed Unused.) }
+procedure EffSpitAcid(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ A mummy's vulnerability to fire (effect 122): a flask of oil does 3d8, and magic or fire damage gains 1 a die.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffMummyFire(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Immunity unless the weapon is silver (half damage) or magical (full damage), and to attacks without a weapon (effect
+  123).
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffSilverMagic(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ A half-elf's 30 percent resistance to sleep and charm (effect 124).
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffHalfElfResistance(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Immunity to charm, sleep, paralysis and poison (effect 125): saves against paralysis and poison succeed.
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffImmuneCharmSleepParalysisPoison(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ A gaze that can be blocked (effect 126): a readied Mirror or the Wooden Holy Symbol of Tyr on the target stops the
+  attacker from targeting it.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffGazeBlock(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Readying an item with an effect (effects 128 to 130, 133, 134, 136, 138 and 139): readying adds the item's effect for
+  good and runs its handler; unreadying removes it.
+  @param(creature The creature with the effect.)
+  @param(p The item.)
+  @param(removed True when the item is being unreadied.) }
+procedure EffGrantItemEffect(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Gauntlets of Ogre Power (effect 131): readying sets Strength 18/00 and adds a lasting Strength effect holding the
+  Strength to restore. Unreadying removes the first Strength effect when the creature is at 18/00, else the first one
+  holding 18/00.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed True when the effect is being removed.) }
+procedure EffGauntlets(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ An aligned weapon (effect 132): a wielder of another alignment than the low nibble of the item's effect has it
+  unreadied and takes magic damage of the upper nibble.
+  @param(creature The creature with the effect.)
+  @param(p The item.)
+  @param(removed True when the item is being unreadied.) }
+procedure EffAlignedWeapon(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ A boulder (effect 135): readying it without Strength 19 or more unreadies it.
+  @param(creature The creature with the effect.)
+  @param(p The item.)
+  @param(removed True when the item is being unreadied.) }
+procedure EffBoulder(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ The spiritual hammer unreadied (effect 137): removal ends the Spiritual Hammer effect.
+  @param(creature The creature with the effect.)
+  @param(p Unused.)
+  @param(removed True when the effect is being removed.) }
+procedure EffHammerGone(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
+{ Does nothing (effects 5, 13, 19, 24, 27, 60, 63, 92 and 127).
+  @param(creature Unused.)
+  @param(p Unused.)
+  @param(removed Unused.) }
+procedure EffNone(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 
 implementation
 
@@ -55,9 +797,6 @@ const
   { Saving-throw category (TCharRecord.saves index): rod / staff / wand }
   SAVE_WAND = 2;
 
-type
-  TFearLevel = (FearLevel0, FearLevel1, FearLevel2, FearLevel3, FearLevel4, FearLevel5);
-
 var
   { 8-entry view over the 5-entry giantFoes. Note: EffDwarfGiantDefense compares all 8 entries, so entries 6..8 read the
     constants stored after giantFoes. }
@@ -100,8 +839,8 @@ end;
 procedure InflictStatusMsg(creature: Types.PCharRecord; status: Byte; msg: Types.TStr40);
 begin
   CharHlp.PrintCreatureMessage(creature, msg, 10, False);
-  case Char(creature^.status) of
-    Char(C_Status.STONED), Char(C_Status.DEAD_STATUS), Char(C_Status.GONE): Exit;
+  case creature^.status of
+    C_Status.STONED, C_Status.DEAD_STATUS, C_Status.GONE: Exit;
   end;
   creature^.status := status;
   creature^.enabled := 0;
@@ -116,20 +855,12 @@ begin
     CharHlp.DisplayParty(GDVars.curChar);
 end;
 
-{ Bless (effect 1): adds 5 to the morale and 1 to the attack roll.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffBless(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   Inc(GDVars.curMorale, 5);
   Inc(GDVars.attackRoll);
 end;
 
-{ Curse (effect 2): takes 5 off the morale, not below 0, and 1 off the attack roll.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffCurse(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if GDVars.curMorale < 5 then
@@ -139,10 +870,6 @@ begin
   Dec(GDVars.attackRoll);
 end;
 
-{ Undead-slaying weapon (effect 3): against an undead target, adds 2 to the attack roll and the damage.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffUndeadSlayer(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   GDVars.otherCreature := creature^.combatAddr^.other;
@@ -153,21 +880,12 @@ begin
   end;
 end;
 
-{ Starting training with a Manual of Bodily Health (effect 4): adds the training effect for 43200 minutes.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffTrainStart(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   CharHlp.PrintCreatureMessage(creature, 'starts to train', 10, True);
   FxEngine.AddEffect(creature, C_Effect.TRAINING_MANUAL, 43200, 255, True);
 end;
 
-{ Flame Tongue weapon (effect 6): against its target adds 1 to the attack roll and damage of a regenerating creature, 2
-  of a cold-based or avian one and 3 of an undead one, and makes the damage magical fire.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffFlameTongue(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   bonus: Byte;
@@ -189,13 +907,6 @@ begin
   GDVars.elementMask := 9;
 end;
 
-{ Manual of Bodily Health training done (effect 7): Constitution rises by 1; at 20 or more it adds regeneration (effect
-  62) for 60 minutes instead. From Constitution 15 the hit points gained above the rolled hit points are divided by the
-  Constitution bonus summed over the class levels (at least 1) and added to the maximum and current hit points when
-  Constitution is below 17 or the creature has fighter levels.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffTrainManual(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   hpGain: Byte;
@@ -229,11 +940,6 @@ begin
   end;
 end;
 
-{ Protection from Evil (effects 8 and 45): against an evil attacker, adds 2 to the saving throw and takes 2 off the
-  attack roll.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffProtEvil(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if (GDVars.curChar^.alignment = EffHndlr.ALIGN_LAWFUL_EVIL) or
@@ -244,11 +950,6 @@ begin
   end;
 end;
 
-{ Protection from Good (effects 9 and 46): against a good attacker, adds 2 to the saving throw and takes 2 off the
-  attack roll.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffProtGood(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if (GDVars.curChar^.alignment = C_Align.LAWFUL_GOOD) or
@@ -259,10 +960,6 @@ begin
   end;
 end;
 
-{ Resist Cold (effect 10): against cold, halves the damage and adds 3 to the saving throw.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffResistCold(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if GDVars.elementMask and 2 <> 0 then begin
@@ -271,12 +968,6 @@ begin
   end;
 end;
 
-{ Charm (effect 11): the first time, the creature changes to the charmer's side, fights automatically and becomes an
-  animated party member if it was one of the party; the strength keeps the applied mark (bit 5), the old side (bit 6)
-  and the charmer's side (bit 7). Each time the morale becomes 100. Removal restores the old side.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed True when the effect is being removed.) }
 procedure EffCharm(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if removed then begin
@@ -298,11 +989,6 @@ begin
   end;
 end;
 
-{ Enlarge and Strength (effects 12 and 38): sets Strength to the value this node holds, then applies the strongest other
-  Enlarge or Strength node, which takes over the Strength to restore. A node whose strength is above $7F is ignored.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffExtraStr(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   base: Byte;
@@ -339,20 +1025,11 @@ begin
   end;
 end;
 
-{ Friends (effect 14): sets Charisma to the node's strength.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffFriends(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   creature^.chaCur := Types.PEffectRec(p)^.strength;
 end;
 
-{ Slow Poison's damage (effect 15): unless the effect lock is on, it re-arms for 10 minutes and deals 1 damage while the
-  creature has more than 1 hit point.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffSlowPoisonHit(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if EffHndlr.AddEffectIfNoLock(creature, C_Effect.SLOW_POISON_HIT, Types.PEffectRec(p)^.strength, 10) then
@@ -364,18 +1041,10 @@ begin
     end;
 end;
 
-{ Read Magic (effect 16): does nothing here; scroll reading checks for the effect.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffReadMagic(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
 end;
 
-{ Shield (effect 17): the armor class becomes at least 3, the saving throw gains 1, and Magic Missile does no damage.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffShield(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   { 60-biased AC 3 }
@@ -387,10 +1056,6 @@ begin
     GDVars.pendingDamage := 0;
 end;
 
-{ Gnome attack bonus (effect 18): adds 1 to the attack roll against a gnome's foe of size 1.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffGnomeAttackBonus(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   i: Byte;
@@ -404,10 +1069,6 @@ begin
           Inc(GDVars.attackRoll);
 end;
 
-{ Resist Fire (effect 20): against fire, halves the damage and adds 3 to the saving throw.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffResistFire(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if GDVars.elementMask and 1 <> 0 then begin
@@ -416,11 +1077,6 @@ begin
   end;
 end;
 
-{ Silence 15' (effect 21): the creature can neither use items nor cast this round, and says it is silenced the first
-  time.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffSilence(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if creature^.combatAddr^.itemUseAllowed <> 0 then
@@ -429,11 +1085,6 @@ begin
   creature^.combatAddr^.castAllowed := 0;
 end;
 
-{ Slow Poison running out (effect 22): a creature still poisoned dies, and Slow Poison's damage effect is removed under
-  the effect lock.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffSlowPoisonEnd(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   effect: Types.PEffectRec;
@@ -445,11 +1096,6 @@ begin
   GDVars.effectLock := 0;
 end;
 
-{ Spiritual Hammer (effect 23): removal deletes the hammer; otherwise a +1 hammer is created when the creature has none
-  and fewer than 16 items.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed True when the effect is being removed.) }
 procedure EffSpiritualHammer(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   item: Types.PItemRec;
@@ -482,11 +1128,6 @@ begin
   CharHlp.RecalcStats(creature);
 end;
 
-{ Invisibility (effect 25): the attacker cannot target the creature unless it sees invisible, and the attack roll loses
-  4.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffInvisible(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   effect: Types.PEffectRec;
@@ -496,10 +1137,6 @@ begin
   Dec(GDVars.attackRoll, 4);
 end;
 
-{ Dwarf attack bonus (effect 26): adds 1 to the attack roll against a dwarf's foe of size 1.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffDwarfAttackBonus(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   i: Byte;
@@ -513,11 +1150,6 @@ begin
           Inc(GDVars.attackRoll);
 end;
 
-{ Mirror Image (effect 28): against a single-target spell, an image takes it unless 1d(images + 1) rolls 1; the strength
-  counts the images left, and the effect goes with the last.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffMirrorImage(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if FxEngine.RollDice(1, Types.PEffectRec(p)^.strength + 1) > 1 then
@@ -531,20 +1163,11 @@ begin
       end;
 end;
 
-{ Ray of Enfeeblement (effect 29): the damage loses a quarter, rounded down.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffEnfeeble(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   GDVars.pendingDamage := GDVars.pendingDamage - GDVars.pendingDamage div 4;
 end;
 
-{ Coughing in a stinking cloud (effect 30): the creature can neither use items nor cast this round, says it is coughing
-  the first time, and its armor class worsens by 2, to the armor class from behind.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffCoughing(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if creature^.combatAddr^.itemUseAllowed <> 0 then
@@ -561,11 +1184,6 @@ begin
     CharHlp.CombatPrintCreatureInfo(creature);
 end;
 
-{ Animate Dead (effect 32), on removal of the animation: the creature collapses dead unless the effect lock is on, and
-  returns to its old side as an ordinary creature.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffAnimateDead(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   Types.PEffectRec(p)^.onRemove := False;
@@ -581,10 +1199,6 @@ begin
   creature^.charType := 0;
 end;
 
-{ Blindness (effect 33): the attack roll, armor class, armor class from behind and saving throw each lose 4.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffBlind(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   Dec(GDVars.attackRoll, 4);
@@ -593,40 +1207,24 @@ begin
   Dec(GDVars.saveRoll, 4);
 end;
 
-{ Diseased (effect 34): runs the Strength and hit-point disease handlers.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed True when the effect is being removed.) }
 procedure EffDiseased(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   FxEngine.CallEffectHandler(C_Effect.DISEASE_STRENGTH, creature, p, removed);
   FxEngine.CallEffectHandler(C_Effect.DISEASE_HIT_POINTS, creature, p, removed);
 end;
 
-{ Prayer for the caster's side (effect 35): adds 1 to the saving throw and the attack roll.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffAlliedPrayer(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   Inc(GDVars.saveRoll);
   Inc(GDVars.attackRoll);
 end;
 
-{ Bestow Curse (effect 36): the attack roll and the saving throw lose 4.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffBestowCurse(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   Dec(GDVars.attackRoll, 4);
   Dec(GDVars.saveRoll, 4);
 end;
 
-{ Blink (effect 37): while the creature has initiative left, it cannot be targeted and attacks on it miss.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffBlinking(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if creature^.combatAddr^.initiative > 0 then begin
@@ -635,11 +1233,6 @@ begin
   end;
 end;
 
-{ Haste (effect 39): the creature ages a year the first time (bit 4 of the strength marks that), and its movement or
-  attacks double.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffHasted(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if Types.PEffectRec(p)^.strength and $10 = 0 then begin
@@ -650,11 +1243,6 @@ begin
   GDVars.attackOrMoveX2 := GDVars.attackOrMoveX2 * 2;
 end;
 
-{ Stinking Cloud running out (effect 40): the cloud this caster made, numbered by the strength's upper nibble, is
-  removed, its cells get their terrain back or a corpse mark, and the remaining clouds are drawn again.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffClearStinkingCloud(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   q: Types.PStinkRec;
@@ -744,10 +1332,6 @@ begin
   FindDamagingWeapon := sel;
 end;
 
-{ Protection from Normal Missiles (effect 41): a missile from a weapon with no plus is avoided.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffProtNormalMissiles(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if EffHndlr.FindDamagingWeapon(GDVars.curChar) <> nil then
@@ -755,20 +1339,11 @@ begin
       EffHndlr.AvoidMissile(creature, 100);
 end;
 
-{ Slow (effect 42): the movement or attacks halve.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffSlowed(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   GDVars.attackOrMoveX2 := GDVars.attackOrMoveX2 div 2;
 end;
 
-{ The Strength-draining disease (effect 43): unless the effect lock is on, it re-arms for 60 minutes and the creature
-  loses 1 Strength, or at Strength 3 becomes helpless.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffDiseaseStrength(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   effect: Types.PEffectRec;
@@ -782,11 +1357,6 @@ begin
         FxEngine.AddEffect(creature, C_Effect.HELPLESS, 0, 255, False);
 end;
 
-{ The hit-point disease (effect 44): unless the effect lock is on, it re-arms for 10 minutes and deals 1 damage, or at 1
-  hit point the creature becomes helpless.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffDiseaseHitPoints(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   effect: Types.PEffectRec;
@@ -802,12 +1372,6 @@ begin
         FxEngine.AddEffect(creature, C_Effect.HELPLESS, 0, 255, False);
 end;
 
-{ Dwarf and gnome defense against giants (effect 47): the attack roll loses 4 when a size-2 attacker is one of the
-  giants. Note: the comparison reads eight names from the five-name giant table, the last three from the storage after
-  it.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffDwarfGiantDefense(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   i: Byte;
@@ -821,10 +1385,6 @@ begin
           Dec(GDVars.attackRoll, 4);
 end;
 
-{ Gnome defense against bugbears and gnolls (effect 48): the attack roll loses 4 against such an attacker.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffGnomeAcBug(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if GDVars.curChar^.charType = 1 then
@@ -832,11 +1392,6 @@ begin
       Dec(GDVars.attackRoll, 4);
 end;
 
-{ Prayer (effect 49): creatures on the caster's side (bit 4 of the strength) get the allied bonus, the others lose 1 on
-  the attack roll and saving throw.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed True when the effect is being removed.) }
 procedure EffPrayer(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   side: Byte;
@@ -850,11 +1405,6 @@ begin
   end;
 end;
 
-{ Mummy rot's block on healing (effect 50): unless the effect lock is on, it re-arms for 14400 minutes and restores 1
-  hit point through the block.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffRotNoHeal(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if EffHndlr.AddEffectIfNoLock(creature, C_Effect.ROT_NO_HEALING, Types.PEffectRec(p)^.strength, 14400) then
@@ -862,46 +1412,24 @@ begin
       CharHlp.AnnounceHealStatus(creature);
 end;
 
-{ Helplessness (effects 31, 51, 52 and 53): ends the creature's actions.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffHelpless(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if CharHlp.EndActions(creature) then ;
 end;
 
-{ Dragon aura (effect 54): does nothing; the effect only marks the creature, shown in camp as repulsed.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffDragonAura(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
 end;
 
-{ Poisoned (effect 55): does nothing; other code checks for the effect.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffPoisoned(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
 end;
 
-{ Wearing a Ring of Invisibility (effect 56): renews invisibility for a minute.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffRenewInvisibility(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   FxEngine.AddEffect(creature, C_Effect.INVISIBLE, 1, 12, False);
 end;
 
-{ Mummy rot (effect 57): each time costs 2 Charisma, not below 3; while the countdown in the strength's upper nibble is
-  above 1 it counts down and re-arms for 43200 minutes, and then the creature rots away. Nothing happens under the
-  effect lock.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffMummyRot(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if GDVars.effectLock <> 0 then Exit;
@@ -919,10 +1447,6 @@ begin
     EffHndlr.InflictStatusMsg(creature, C_Status.GONE, 'Dies rots away');
 end;
 
-{ Immobility (effect 58): the creature has no movement.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffImmobile(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   creature^.combatAddr^.movement := 0;
@@ -930,20 +1454,11 @@ begin
     GDVars.attackOrMoveX2 := 0;
 end;
 
-{ A troll's regeneration starting (effect 59): adds lasting regeneration (effect 98).
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffTrollRegen(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   FxEngine.AddEffect(creature, C_Effect.REGENERATION, 0, 255, False);
 end;
 
-{ Ring of Fire Resistance (effect 61): against fire the damage loses 2 a die, at least 1 a die, the saving throw gains
-  4, and fire that is not magical is nullified.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffRingFireRes(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   i: Byte;
@@ -960,11 +1475,6 @@ begin
   end;
 end;
 
-{ Regeneration from high Constitution (effect 62): unless the effect lock is on, it re-arms for 60 minutes and restores
-  1 hit point.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffConRegeneration(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if EffHndlr.AddEffectIfNoLock(creature, EffHndlr.CONSTITUTION_REGENERATION, Types.PEffectRec(p)^.strength, 60) then
@@ -999,96 +1509,54 @@ begin
   end;
 end;
 
-{ Poison on a hit (effect 64): the target saves at +0.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffPoisonAttack(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   EffHndlr.PoisonTarget(creature, 0);
 end;
 
-{ Weak poison on a hit (effect 65): the target saves at +4.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffWeakPoisonAttack(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   EffHndlr.PoisonTarget(creature, 4);
 end;
 
-{ Mild poison on a hit (effect 66): the target saves at +2.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffMildPoisonAttack(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   EffHndlr.PoisonTarget(creature, 2);
 end;
 
-{ Thri-kreen paralysis on a hit (effect 67): 2d8 minutes.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffParalyzingHit(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   EffHndlr.ParalyzeTarget(creature, FxEngine.RollDice(2, 8), 0);
 end;
 
-{ Ghoul paralysis on a hit (effect 68): 63 minutes, not against elves.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffGhoulPara(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if creature^.combatAddr^.other^.race <> C_Race.ELF then
     EffHndlr.ParalyzeTarget(creature, 63, 0);
 end;
 
-{ Drider paralysis on a hit (effect 69): 1d9+10 minutes. Note: the -2 save modifier is passed but not used.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffDriderPara(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   EffHndlr.ParalyzeTarget(creature, FxEngine.RollDice(1, 9) + 10, -2);
 end;
 
-{ Strong poison on a hit (effect 70): the target saves at -2.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffStrongPoisonAttack(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   EffHndlr.PoisonTarget(creature, -2);
 end;
 
-{ Dust of Disappearance (effect 71): the creature cannot be targeted, and the attack roll loses 4.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffDustDisappear(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   GDVars.suppressTargeting := 1;
   Dec(GDVars.attackRoll, 4);
 end;
 
-{ Camouflage and the Cloak of Elvenkind (effect 72): 95 percent of the time, invisibility for a minute.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffCamouflage(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if FxEngine.RollDice(1, 100) <= 95 then
     FxEngine.AddEffect(creature, C_Effect.INVISIBLE, 1, 12, False);
 end;
 
-{ Draining blood (effect 75): the creature drains 1d4 from its victim, the strength being the victim's combat slot and
-  the duration's upper bits the damage left, ending its actions; the drain ends when the budget runs out or the victim
-  drops. On removal, or when either side is down, the victim is freed, and a creature still up with its victim up flees.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed True when the effect is being removed.) }
 procedure EffBloodDrain(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   { Unused in this version; see the other implementations of this routine. }
@@ -1118,26 +1586,16 @@ begin
   end;
 end;
 
-{ Attaching to drain blood (effect 76): the attacker starts draining its target, with 12 to drain, and the target is
-  held still.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffBloodAttach(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   GDVars.otherCreature := creature^.combatAddr^.other;
-  { duration 207 = 12 * 16 + 15: a 12 hp budget in the upper bits }
-  FxEngine.AddEffect(creature, C_Effect.BLOOD_DRAIN, 207, CbtMap.CombatSlot(GDVars.otherCreature),
-                     True);
+  { a 12 hp budget in the upper bits of the duration }
+  FxEngine.AddEffect(creature, C_Effect.BLOOD_DRAIN, 12 * 16 + 15,
+                     CbtMap.CombatSlot(GDVars.otherCreature), True);
   FxEngine.AddEffect(GDVars.otherCreature, C_Effect.IMMOBILE, 0, 255, False);
   FxEngine.CallEffectHandler(C_Effect.IMMOBILE, GDVars.otherCreature, nil, False);
 end;
 
-{ Biting and holding on (effect 77): the attacker starts holding its target, which is held still, unless the target has
-  Strength 19 or more.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffBiteHold(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   GDVars.otherCreature := creature^.combatAddr^.other;
@@ -1150,10 +1608,6 @@ begin
   end;
 end;
 
-{ Waking when healed (effect 78): the creature revives with its current hit points, or tries again in a minute.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffDelayedRevival(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   { Unused in this version; see the other implementations of this routine. }
@@ -1163,31 +1617,18 @@ begin
     repeated := EffHndlr.AddEffectIfNoLock(creature, C_Effect.HEAL_WAKE, Types.PEffectRec(p)^.strength, 1);
 end;
 
-{ Fire on a hit (effect 79): 2d10 magical fire damage to the target.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffFireTouch(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   GDVars.elementMask := 9;
   FxEngine.InflictNonWeaponDamage(creature^.combatAddr^.other, FxEngine.RollDamageDice(2, 10), 0, False);
 end;
 
-{ Acid on a hit (effect 80): 1d4 acid damage to the target.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffAcidTouch(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   GDVars.elementMask := $10;
   FxEngine.InflictNonWeaponDamage(creature^.combatAddr^.other, FxEngine.RollDamageDice(1, 4), 0, False);
 end;
 
-{ Dragon fear (effect 81): each enabled enemy saves against spells or, by its highest level, is paralyzed with fear for
-  good (0 to 3) or cursed (4 and 5); level 6 and above is unaffected.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffDragonFear(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   q: Types.PCharRecord;
@@ -1198,23 +1639,16 @@ begin
     if q^.enabled <> 0 then
       if CharHlp.EnemyTeam(creature) = q^.hostile then begin
         saved := FxEngine.RollSavingThrow(q, C_Save.SPELL, 0);
-        case TFearLevel(q^.levelHighest) of
-          FearLevel0..FearLevel3:
-            FxEngine.AddEffectWithMessage(q, C_Effect.PARALYSIS, 0, 12, False, True, saved, 'is paralyzed with fear');
-          FearLevel4, FearLevel5:
-            FxEngine.AddEffectWithMessage(q, C_Effect.CURSE, 0, 12, False, True, saved, 'is weakened by fear');
+        case q^.levelHighest of
+          0..3: FxEngine.AddEffectWithMessage(q, C_Effect.PARALYSIS, 0, 12, False, True, saved,
+                                              'is paralyzed with fear');
+          4, 5: FxEngine.AddEffectWithMessage(q, C_Effect.CURSE, 0, 12, False, True, saved, 'is weakened by fear');
         end;
       end;
     q := q^.nextCharAddr;
   end;
 end;
 
-{ Mummy fear (effect 82): the effect is removed from each creature, the mummy's own included; each enabled enemy then
-  saves against paralysis, at +1 when its team has six members or more and +2 when human, or is paralyzed with fear for
-  1d4 minutes.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffMummyFear(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   q: Types.PCharRecord;
@@ -1239,11 +1673,6 @@ begin
   end;
 end;
 
-{ Petrifying gaze (effect 83): the target saves against petrification or is stoned. When the gaze can be reflected
-  (effect 127), a readied Mirror turns it back on the gazer.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffPetrifyingGaze(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   item: Types.PItemRec;
@@ -1277,11 +1706,6 @@ begin
     EffHndlr.InflictStatusMsg(GDVars.otherCreature, C_Status.STONED, 'is Stoned');
 end;
 
-{ Charming gaze (effect 84): with a clear line to a target it may attack, the target is charmed as by Charm Person,
-  saving against spells at -2, with no spell or action used.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffCharmGaze(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   dist: Word;
@@ -1401,29 +1825,16 @@ begin
   end;
 end;
 
-{ Draining a level on a hit (effect 85).
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffDrainOne(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   EffHndlr.DrainLevels(creature^.combatAddr^.other, 1);
 end;
 
-{ Draining two levels on a hit (effect 86).
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffDrainTwo(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   EffHndlr.DrainLevels(creature^.combatAddr^.other, 2);
 end;
 
-{ Mummy rot on a hit (effect 87): unless the target already has it, it gets the healing block (effect 50) and the rot
-  (effect 57) with a countdown of 1d6.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffRotTouch(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   effect: Types.PEffectRec;
@@ -1437,11 +1848,6 @@ begin
   end;
 end;
 
-{ Displacement (effect 89): the first attack on the creature each round misses; bit 4 of the strength marks that it has
-  been used, cleared at the start of the battle.
-  @param(creature Unused.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffDisplaced(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if (GDVars.roundCounter = 0) and (GDVars.attackRoll = 0) then
@@ -1453,11 +1859,6 @@ begin
     end;
 end;
 
-{ Constitution's save bonus against poison (effect 90): 1 to 5 by Constitution. Note: outside Constitution 4 to 20 the
-  bonus is unset.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffConPsnSave(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   bonus: Byte;
@@ -1474,10 +1875,6 @@ begin
   end;
 end;
 
-{ Immunity to electricity and Magic Missile (effect 91).
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffImmuneMagicMissile(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if GDVars.curSpell = 15 then begin
@@ -1488,20 +1885,12 @@ begin
       EffHndlr.NullifyAttack(0);
 end;
 
-{ Half damage from fire (effect 93).
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffHalfFire(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if GDVars.elementMask and 1 <> 0 then
     GDVars.pendingDamage := GDVars.pendingDamage div 2;
 end;
 
-{ Half damage from blunt and piercing weapons (effect 94).
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffHalfBash(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   w: Types.PItemRec;
@@ -1512,10 +1901,6 @@ begin
       GDVars.pendingDamage := GDVars.pendingDamage div 2;
 end;
 
-{ Fighting on at 0 hit points (effect 95): when it runs out, a creature still fighting falls dead.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffFightOn(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   Types.PEffectRec(p)^.onRemove := False;
@@ -1523,10 +1908,6 @@ begin
     EffHndlr.InflictStatusMsg(creature, C_Status.DEAD_STATUS, 'Falls dead');
 end;
 
-{ Immunity to weapons neither magical nor silver, and to attacks without a weapon (effect 96).
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffNeedSilver(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   w: Types.PItemRec;
@@ -1536,11 +1917,6 @@ begin
     GDVars.pendingDamage := 0;
 end;
 
-{ Constitution's save bonus against spells and wands (effect 97): 1 to 5 by Constitution. Note: outside Constitution 4
-  to 20 the bonus is unset.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffConSpellSave(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   bonus: Byte;
@@ -1557,10 +1933,6 @@ begin
   end;
 end;
 
-{ Regeneration (effect 98): 3 hit points a round, up to the maximum.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffRegeneration(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   Inc(creature^.hpCur, 3);
@@ -1568,11 +1940,6 @@ begin
     creature^.hpCur := creature^.hpMax;
 end;
 
-{ Being able to fight on (effect 99): a dying creature less than 6 below 0, or an unconscious one, revives and fights on
-  (effect 95) for 1d4+1 minutes, and this effect goes.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffCanFightOn(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   hp: Byte;
@@ -1591,21 +1958,12 @@ begin
     end;
 end;
 
-{ A troll's vulnerability to fire and acid (effect 100): damage of any other kind brings it back (effect 102) in 3d6
-  minutes.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffTrollBurn(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if (GDVars.elementMask and 1 = 0) and (GDVars.elementMask and $10 = 0) then
     FxEngine.AddEffect(creature, EffHndlr.TROLL_RETURN, FxEngine.RollDice(3, 6), 255, True);
 end;
 
-{ A troll's regeneration (effect 101): unless it already regenerates, regeneration starts in 3 minutes (effect 59).
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffTrollHeal(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   effect: Types.PEffectRec;
@@ -1615,10 +1973,6 @@ begin
       FxEngine.AddEffect(creature, C_Effect.TROLL_REGENERATION, 3, 255, True);
 end;
 
-{ A troll coming back (effect 102): it revives at full hit points, or tries again in a minute.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffTrollReturn(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   { Unused in this version; see the other implementations of this routine. }
@@ -1628,10 +1982,6 @@ begin
     repeated := EffHndlr.AddEffectIfNoLock(creature, EffHndlr.TROLL_RETURN, Types.PEffectRec(p)^.strength, 1);
 end;
 
-{ Gaseous form (effect 103): the creature escapes and is taken out of play as fled.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffGaseous(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   Types.PEffectRec(p)^.onRemove := False;
@@ -1639,10 +1989,6 @@ begin
   FxEngine.PutOutOfPlayWithStatus(creature, C_Status.RUNNING, 'Turns gaseous and escapes');
 end;
 
-{ Thri-kreen missile dodging (effect 104): a 60 percent chance to avoid a missile.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffDodgeMissiles(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   EffHndlr.AvoidMissile(creature, 60);
@@ -1665,28 +2011,16 @@ begin
     EffHndlr.NullifyAttack(0);
 end;
 
-{ Magic resistance of 50 percent (effect 105).
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffStrongMagicResistance(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   EffHndlr.MagicResistance(50);
 end;
 
-{ Magic resistance (effect 106). Note: it passes 15, so it resists 15 percent, not 85, against an 11th-level caster.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffWeakMagicResistance(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   EffHndlr.MagicResistance(15);
 end;
 
-{ An elf's 90 percent resistance to sleep and charm (effect 107).
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffElfResistance(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if FxEngine.RollDice(1, 100) <= 90 then begin
@@ -1695,39 +2029,23 @@ begin
   end;
 end;
 
-{ Immunity to sleep and charm (effect 108).
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffImmuneSleepCharm(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   EffHndlr.NullifyAttack(C_Effect.CHARM);
   EffHndlr.NullifyAttack(C_Effect.SLEEP);
 end;
 
-{ Immunity to paralysis (effect 109).
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffImmuneParalysis(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   EffHndlr.NullifyAttack(C_Effect.PARALYSIS);
 end;
 
-{ Immunity to cold (effect 110).
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffNoCold(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if GDVars.elementMask and 2 <> 0 then
     EffHndlr.NullifyAttack(0);
 end;
 
-{ Immunity to paralysis and poison (effect 111): saves against paralysis and poison succeed.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffImmuneParalysisPoison(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   EffHndlr.NullifyAttack(C_Effect.POISONED);
@@ -1736,20 +2054,12 @@ begin
     GDVars.saveRoll := 100;
 end;
 
-{ Immunity to fire (effect 112).
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffNoFire(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if GDVars.elementMask and 1 <> 0 then
     EffHndlr.NullifyAttack(0);
 end;
 
-{ An efreeti's fire resistance (effect 113): fire damage loses 1 a die, at least 1 a die.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffEfreetiFire(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   i: Byte;
@@ -1762,20 +2072,12 @@ begin
     end;
 end;
 
-{ Half damage from electricity (effect 114).
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffHalfElec(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if GDVars.elementMask and 4 <> 0 then
     GDVars.pendingDamage := GDVars.pendingDamage div 2;
 end;
 
-{ Half damage from slashing and piercing weapons (effect 115).
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffHalfSlashPierce(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   w: Types.PItemRec;
@@ -1787,10 +2089,6 @@ begin
       GDVars.pendingDamage := GDVars.pendingDamage div 2;
 end;
 
-{ Half damage from magical weapons (effect 116).
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffHalfMagicWeapon(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   w: Types.PItemRec;
@@ -1801,10 +2099,6 @@ begin
       GDVars.pendingDamage := GDVars.pendingDamage div 2;
 end;
 
-{ Vulnerability to holy water (effect 117): a holy water vial does 1d6+1.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffHolyWater(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   item: Types.PItemRec;
@@ -1815,21 +2109,12 @@ begin
       GDVars.pendingDamage := FxEngine.RollDamageDice(1, 6) + 1;
 end;
 
-{ Half damage from cold (effect 118).
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffHalfCold(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if GDVars.elementMask and 2 <> 0 then
     GDVars.pendingDamage := GDVars.pendingDamage div 2;
 end;
 
-{ Immunity to weapons that are not magical, and to attacks without a weapon (effect 119), against a character race or an
-  attacker below level 4.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffNeedMagicWeapon(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   w: Types.PItemRec;
@@ -1840,10 +2125,6 @@ begin
       GDVars.pendingDamage := 0;
 end;
 
-{ Dodging boulders (effect 120): a 50 percent chance to avoid a thrown boulder.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffDodgeBoulders(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   item: Types.PItemRec;
@@ -1854,11 +2135,6 @@ begin
       EffHndlr.AvoidMissile(creature, 50);
 end;
 
-{ An ankheg's acid spit (effect 121): a 25 percent chance against a target within 4 cells, 8d4 acid, half on a save
-  against breath; the creature's actions end and the effect removes itself and the acid touch.
-  @param(creature The creature with the effect.)
-  @param(p The effect's node.)
-  @param(removed Unused.) }
 procedure EffSpitAcid(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   { Unused in this version; see the other implementations of this routine. }
@@ -1879,10 +2155,6 @@ begin
   FxEngine.RemoveEffect(creature, C_Effect.ACID_SQUIRT, nil);
 end;
 
-{ A mummy's vulnerability to fire (effect 122): a flask of oil does 3d8, and magic or fire damage gains 1 a die.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffMummyFire(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   item: Types.PItemRec;
@@ -1895,11 +2167,6 @@ begin
     Inc(GDVars.pendingDamage, GDVars.damageDice);
 end;
 
-{ Immunity unless the weapon is silver (half damage) or magical (full damage), and to attacks without a weapon (effect
-  123).
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffSilverMagic(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   w: Types.PItemRec;
@@ -1914,10 +2181,6 @@ begin
     GDVars.pendingDamage := 0;
 end;
 
-{ A half-elf's 30 percent resistance to sleep and charm (effect 124).
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffHalfElfResistance(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if FxEngine.RollDice(1, 100) <= 30 then begin
@@ -1926,10 +2189,6 @@ begin
   end;
 end;
 
-{ Immunity to charm, sleep, paralysis and poison (effect 125): saves against paralysis and poison succeed.
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffImmuneCharmSleepParalysisPoison(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   EffHndlr.NullifyAttack(C_Effect.CHARM);
@@ -1940,11 +2199,6 @@ begin
     GDVars.saveRoll := 100;
 end;
 
-{ A gaze that can be blocked (effect 126): a readied Mirror or the Wooden Holy Symbol of Tyr on the target stops the
-  attacker from targeting it.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffGazeBlock(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   item: Types.PItemRec;
@@ -1962,11 +2216,6 @@ begin
   end;
 end;
 
-{ Readying an item with an effect (effects 128 to 130, 133, 134, 136, 138 and 139): readying adds the item's effect for
-  good and runs its handler; unreadying removes it.
-  @param(creature The creature with the effect.)
-  @param(p The item.)
-  @param(removed True when the item is being unreadied.) }
 procedure EffGrantItemEffect(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   item: Types.PItemRec;
@@ -1980,12 +2229,6 @@ begin
   end;
 end;
 
-{ Gauntlets of Ogre Power (effect 131): readying sets Strength 18/00 and adds a lasting Strength effect holding the
-  Strength to restore. Unreadying removes the first Strength effect when the creature is at 18/00, else the first one
-  holding 18/00.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed True when the effect is being removed.) }
 procedure EffGauntlets(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   enc: Byte;
@@ -2027,11 +2270,6 @@ begin
   end;
 end;
 
-{ An aligned weapon (effect 132): a wielder of another alignment than the low nibble of the item's effect has it
-  unreadied and takes magic damage of the upper nibble.
-  @param(creature The creature with the effect.)
-  @param(p The item.)
-  @param(removed True when the item is being unreadied.) }
 procedure EffAlignedWeapon(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   item: Types.PItemRec;
@@ -2050,10 +2288,6 @@ begin
   end;
 end;
 
-{ A boulder (effect 135): readying it without Strength 19 or more unreadies it.
-  @param(creature The creature with the effect.)
-  @param(p The item.)
-  @param(removed True when the item is being unreadied.) }
 procedure EffBoulder(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   item: Types.PItemRec;
@@ -2066,20 +2300,12 @@ begin
   end;
 end;
 
-{ The spiritual hammer unreadied (effect 137): removal ends the Spiritual Hammer effect.
-  @param(creature The creature with the effect.)
-  @param(p Unused.)
-  @param(removed True when the effect is being removed.) }
 procedure EffHammerGone(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   if removed then
     FxEngine.RemoveEffect(creature, C_Effect.SPIRITUAL_HAMMER, nil);
 end;
 
-{ Does nothing (effects 5, 13, 19, 24, 27, 60, 63, 92 and 127).
-  @param(creature Unused.)
-  @param(p Unused.)
-  @param(removed Unused.) }
 procedure EffNone(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
 end;

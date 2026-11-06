@@ -4,23 +4,7 @@ unit Money;
 
 interface
 
-uses Types, Crt, C_Npc, GDConsts, GDVars, MenuCore, GameIo, TextRend, Border, CharHlp, FxEngine, C_Keys,
-  C_Ifc, C_Money;
-
-{ Works out how many coins of weight a character can carry: its weight allowance plus 1500.
-  @param(p The character.)
-  @returns(The carrying capacity.) }
-function CarryingCapacity(p: Types.PCharRecord): Word;
-
-{ Takes weight off a character's encumbrance.
-  @param(p The character.)
-  @param(w The weight.) }
-procedure RemoveWeight(p: Types.PCharRecord; w: Word);
-
-{ Adds weight to a character's encumbrance.
-  @param(p The character.)
-  @param(w The weight.) }
-procedure AddWeight(p: Types.PCharRecord; w: Word);
+uses Types, Crt, C_Npc, GDConsts, GDVars, TextRend, Border, CharHlp, FxEngine, C_Keys, C_Ifc, C_Money, GameIo, MenuCore;
 
 { Tells whether carrying more coins would overload a character.
   @param(p The character.)
@@ -31,10 +15,6 @@ function CheckOverload(p: Types.PCharRecord; w: Word; var takable: Word): Boolea
 
 { Pools the money of each party member that is not an NPC, or is an animated member, and sets treasureMoneyFlag. }
 procedure PoolMoney;
-
-{ Counts the party members whose money PoolMoney pools.
-  @returns(The count.) }
-function CountPoolers: Byte;
 
 { Shares out the pooled money. Each type's share is the pool divided by CountPoolers, the remainder held back. The first
   pass gives each creature that is not an NPC its share of each type, from jewelry down to copper, or as much as fits
@@ -47,10 +27,6 @@ procedure ShareMoney;
   pool's amount, is taken by the current character. It repeats while money is left. Note: the menu entries are freed
   only after a take, not when the menu is left. }
 procedure TakeMoneyMenu;
-
-{ Gives platinum to the current character; what does not fit goes to the pooled money.
-  @param(pp The platinum pieces.) }
-procedure GivePlatinum(pp: Word);
 
 { Reads a money type from the start of a menu entry. Leading spaces are skipped, unchecked; the first letter gives the
   type, and for G the second letter, upper-cased, tells gems from gold. An unknown letter leaves the result and the name
@@ -130,16 +106,25 @@ var
   { lo-word view }
   treasureMoneyLo: array[C_Money.COPPER..C_Money.JEWELRY] of TLoW absolute GDVars.treasureMoney;
 
+{ Works out how many coins of weight a character can carry: its weight allowance plus 1500.
+  @param(p The character.)
+  @returns(The carrying capacity.) }
 function CarryingCapacity(p: Types.PCharRecord): Word;
 begin
   CarryingCapacity := CharHlp.WeightAllowance(p) + 1500;
 end;
 
+{ Takes weight off a character's encumbrance.
+  @param(p The character.)
+  @param(w The weight.) }
 procedure RemoveWeight(p: Types.PCharRecord; w: Word);
 begin
   p^.encumbrance := p^.encumbrance - w;
 end;
 
+{ Adds weight to a character's encumbrance.
+  @param(p The character.)
+  @param(w The weight.) }
 procedure AddWeight(p: Types.PCharRecord; w: Word);
 begin
   p^.encumbrance := p^.encumbrance + w;
@@ -189,6 +174,8 @@ begin
   GDVars.treasureMoney[C_Money.GOLD] := gp mod 5;
 end;
 
+{ Gives platinum to the current character; what does not fit goes to the pooled money.
+  @param(pp The platinum pieces.) }
 procedure GivePlatinum(pp: Word);
 var
   takable: Word;
@@ -284,6 +271,8 @@ begin
   end;
 end;
 
+{ Counts the party members whose money PoolMoney pools.
+  @returns(The count.) }
 function CountPoolers: Byte;
 var
   p: Types.PCharRecord;
@@ -658,14 +647,14 @@ begin
           end;
           { value in gp = plus * K }
           case itemType of
-            59: value := plus * 2500;
-            73, 28: value := plus * 150;
-            53, 54: value := plus * 3000;
-            55, 56: value := plus * 3500;
-            57: value := plus * 4000;
-            58: value := plus * 5000;
-            77: value := plus * 3000;
-            else value := plus * 2000;
+            59: value := Word(plus) * 2500;
+            73, 28: value := Word(plus) * 150;
+            53, 54: value := Word(plus) * 3000;
+            55, 56: value := Word(plus) * 3500;
+            57: value := Word(plus) * 4000;
+            58: value := Word(plus) * 5000;
+            77: value := Word(plus) * 3000;
+            else value := Word(plus) * 2000;
           end;
         end;
       { scrolls }
@@ -697,7 +686,7 @@ begin
                 3: spell := FxEngine.RollDice(1, 9) + 35;
               end;
             spells[j] := spell;
-            value := r * 300 + value;
+            value := Word(r) * 300 + value;
           end;
         end;
       63: templateWordIndex := 73;

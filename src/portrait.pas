@@ -5,10 +5,7 @@ unit Portrait;
 
 interface
 
-uses Types, Crt, GDConsts, GDVars, Blit, DaxIo, GameIo, Border;
-
-{ Empty routine with no callers. }
-procedure NoopPortrait;
+uses Types, Crt, GDConsts, GDVars, Blit, GameIo, Border, DaxIo;
 
 { Draws a picture. An animation frame is drawn transparently and clipped into the view buffer one cell up and to the
   left, and the view is flushed; a plain picture goes straight to the screen.
@@ -17,18 +14,6 @@ procedure NoopPortrait;
   @param(anim True for an animation frame.)
   @param(pic The picture; nil draws nothing.) }
 procedure DisplayImageBuf(col, row: Integer; anim: Boolean; pic: Types.PImgBuf);
-
-{ Draws a portrait head straight to the screen.
-  @param(col Column of the head's upper-left character cell.)
-  @param(row Row of the head's upper-left character cell.)
-  @param(pic The head picture; nil draws nothing.) }
-procedure DisplayPortraitHead(col, row: Byte; pic: Types.PImgBuf);
-
-{ Draws a portrait body straight to the screen, five character rows below the head drawn at the same cell.
-  @param(col Column of the head's upper-left character cell.)
-  @param(row Row of the head's upper-left character cell.)
-  @param(pic The body picture; nil draws nothing.) }
-procedure DisplayPortraitBody(col, row: Byte; pic: Types.PImgBuf);
 
 { Loads a picture of <name><disk>.DAX into an animation record, unless that picture is the one last loaded, which it
   then keeps. Picture 1 of PIC is capped at four frames. A frame is loaded only while at least 3900 bytes of heap are
@@ -70,10 +55,6 @@ procedure Show3DSprite(dist: Byte; a: Types.TAnimRec);
 
 implementation
 
-procedure NoopPortrait;
-begin
-end;
-
 procedure DisplayImageBuf(col, row: Integer; anim: Boolean; pic: Types.PImgBuf);
 begin
   if pic <> nil then
@@ -84,11 +65,19 @@ begin
       Blit.ShowPic(col, row, pic);
 end;
 
+{ Draws a portrait head straight to the screen.
+  @param(col Column of the head's upper-left character cell.)
+  @param(row Row of the head's upper-left character cell.)
+  @param(pic The head picture; nil draws nothing.) }
 procedure DisplayPortraitHead(col, row: Byte; pic: Types.PImgBuf);
 begin
   Portrait.DisplayImageBuf(col, row, False, pic);
 end;
 
+{ Draws a portrait body straight to the screen, five character rows below the head drawn at the same cell.
+  @param(col Column of the head's upper-left character cell.)
+  @param(row Row of the head's upper-left character cell.)
+  @param(pic The body picture; nil draws nothing.) }
 procedure DisplayPortraitBody(col, row: Byte; pic: Types.PImgBuf);
 begin
   Portrait.DisplayImageBuf(col, row + 5, False, pic);

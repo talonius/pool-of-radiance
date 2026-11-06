@@ -56,10 +56,6 @@ function WalkLine(x, y: ShortInt; var tx, ty: ShortInt; var dist: Word; view: Ty
   @param(view The arena.) }
 procedure BuildTargetList(x, y: ShortInt; range: Word; filter: Byte; size: Byte; view: Types.PArena);
 
-{ Sorts the target list by doubled distance, nearest first. On a tie, a later target moves ahead only when its direction
-  is lower and it does not put a diagonal (odd) direction ahead of a cardinal (even) one. }
-procedure SortTargets;
-
 implementation
 
 function SignOf(v: Integer): Integer;
@@ -72,6 +68,8 @@ begin
     SignOf := 0;
 end;
 
+{ Sorts the target list by doubled distance, nearest first. On a tie, a later target moves ahead only when its direction
+  is lower and it does not put a diagonal (odd) direction ahead of a cardinal (even) one. }
 procedure SortTargets;
 var
   i: Byte;

@@ -1,10 +1,11 @@
 @echo off
-rem Pool of Radiance v1.2: assemble and rebuild START.EXE and GAME.OVR.
-rem Run from e:\src through gametools/build.sh. It mounts this version
-rem as E:, the compiler directory as D:, and TASM as F:.
-rem Keep PATH at d:\ to avoid DOS short-name conversion of toolchain paths.
-rem The driver creates e:\obj; compiler and assembler outputs belong there.
-rem Remove stale units and objects from both search locations before rebuilding.
+rem Pool of Radiance v1.3: build packed START.EXE and GAME.OVR in e:\obj.
+rem gametools/build.sh runs this batch from e:\src and creates output/log dirs.
+rem Mounts: C: games, D: compiler, E: version tree, F: TASM, G: EXEPACK.
+rem Keep PATH at d:\; drive mounts avoid DOS 8.3 toolchain path truncation.
+rem TPC reads src\TPC.CFG; compiler and assembler outputs go to e:\obj.
+rem Remove stale units and objects from both source and output directories
+rem before rebuilding so the link cannot reuse them.
 if exist *.TPU del *.TPU
 if exist *.OBJ del *.OBJ
 if exist e:\obj\*.TPU del e:\obj\*.TPU
@@ -17,7 +18,6 @@ if exist e:\obj\GAME.OVR del e:\obj\GAME.OVR
 f:\tasm sounddrv,e:\obj\sounddrv > e:\build\logs\TASM.OUT
 path d:\
 tpc fixmain.pas /B /E..\obj /O..\obj > e:\build\logs\TPC.OUT
-rem  TPC names both outputs after the root; SSI shipped them as
-rem  START.EXE and GAME.OVR.
-ren e:\obj\FIXMAIN.EXE START.EXE
+rem  TPC names the overlay after the root; SSI shipped it as GAME.OVR.
 ren e:\obj\FIXMAIN.OVR GAME.OVR
+g:\exepack e:\obj\FIXMAIN.EXE e:\obj\START.EXE > e:\build\logs\PACK.OUT

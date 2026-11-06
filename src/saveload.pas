@@ -6,8 +6,8 @@ unit SaveLoad;
 
 interface
 
-uses Types, Crt, C_Area, GDConsts, GDVars, Blit, TextRend, DaxIo, GameIo, MenuCore, Ending,
-  ClassCal, FxEngine, View3D, MapTiles, C_Race, C_Keys, C_Class, C_Ifc, C_Gbvm;
+uses Types, Crt, C_Area, GDConsts, GDVars, Blit, TextRend, GameIo, MenuCore, Ending, ClassCal, FxEngine, View3D,
+  MapTiles, C_Race, C_Keys, C_Class, C_Ifc, C_Gbvm, DaxIo;
 
 { Reads CHARLIST.TXT in the save directory into a new list of menu entries, each allocated with only the name, inUse and
   next fields of TItemRec. Names of characters in the party get '* ' in front.
@@ -18,15 +18,6 @@ procedure LoadCharlist(var list: Types.PItemRec);
   file cannot be opened it asks for the save disk.
   @param(list The names.) }
 procedure SaveCharlist(list: Types.PItemRec);
-
-{ Creates the save directory, asking for the save disk until the directory is made or already exists. }
-procedure CheckSaveDir;
-
-{ Lays one icon picture over another: ORs the pixels on and ANDs the transparency masks. The EGA mask, one plane, is
-  sized from the head picture in icon slot 11 rather than from src.
-  @param(src The picture laid on.)
-  @param(dst The picture it is laid onto.) }
-procedure MergeIcon(src, dst: Types.PImgBuf);
 
 { Builds the current character's combat icon from virtual disk 3: its head and body pictures, the head laid over the
   body in the character's icon slot, then discards pending keys.
@@ -74,7 +65,7 @@ procedure LoadGame;
 procedure SaveGame;
 
 { Appends a character to the party and makes it the current character. It takes the lowest free icon slot (0 to 7) and
-  the GBVM party size goes up. An NPC also has its class values recomputed.
+  the GBVM party size goes up. Its class values are recomputed.
   @param(creature The character.) }
 procedure AddCharToParty(creature: Types.PCharRecord);
 
@@ -95,8 +86,7 @@ const
   { current disk number }
   GBVM_DISK_NUM = $6E12;
 
-  { Race value (TCharRecord.race) }
-  HALF_ORC = 6;
+procedure CheckSaveDir; forward;
 
 procedure LoadCharlist(var list: Types.PItemRec);
 var
@@ -153,6 +143,7 @@ begin
   Close(f);
 end;
 
+{ Creates the save directory, asking for the save disk until the directory is made or already exists. }
 procedure CheckSaveDir;
 var
   ioRes: Integer;
@@ -165,6 +156,10 @@ begin
   until (ioRes = 0) or (ioRes = 5);
 end;
 
+{ Lays one icon picture over another: ORs the pixels on and ANDs the transparency masks. The EGA mask, one plane, is
+  sized from the head picture in icon slot 11 rather than from src.
+  @param(src The picture laid on.)
+  @param(dst The picture it is laid onto.) }
 procedure MergeIcon(src, dst: Types.PImgBuf);
 var
   n: Word;
@@ -274,7 +269,6 @@ begin
   Close(f);
   if DaxIo.FileExists(fn + '.itm') then begin
     Assign(f, fn + '.itm');
-    Close(f);
     Erase(f);
   end;
   if creature^.itemsAddr <> nil then begin
@@ -289,7 +283,6 @@ begin
   end;
   if DaxIo.FileExists(fn + '.spc') then begin
     Assign(f, fn + '.spc');
-    Close(f);
     Erase(f);
   end;
   if creature^.effectsAddr <> nil then begin
@@ -385,10 +378,9 @@ begin
     effectsAddr := nil;
     nextCharAddr := nil;
     combatAddr := nil;
-    case Char(race) of
-      Char(C_Race.DWARF), Char(C_Race.GNOME), Char(C_Race.HALFLING): iconSize := 1;
-      Char(C_Race.ELF), Char(C_Race.HALF_ELF), Char(SaveLoad.HALF_ORC),
-      Char(C_Race.HUMAN): iconSize := 2;
+    case race of
+      C_Race.DWARF, C_Race.GNOME, C_Race.HALFLING: iconSize := 1;
+      C_Race.ELF, C_Race.HALF_ELF, C_Race.HALF_ORC, C_Race.HUMAN: iconSize := 2;
     end;
     for i := 1 to 3 do begin
       roll := FxEngine.RollDice(1, 6);
@@ -464,10 +456,10 @@ begin
       classes[cnt] := C_Class.FIGHTER_LEVEL;
     end;
     cnt := FxEngine.RollDice(1, cnt);
-    case Char(classes[cnt]) of
-      #0: portraitBody := GDConsts.npcClericBodies[genderSp, FxEngine.RollDice(1, 5)];
-      #5: portraitBody := GDConsts.npcMageBodies[genderSp, FxEngine.RollDice(1, 5)];
-      #6: portraitBody := GDConsts.npcThiefBodies[genderSp, FxEngine.RollDice(1, 5)];
+    case classes[cnt] of
+      C_Class.CLERIC_LEVEL: portraitBody := GDConsts.npcClericBodies[genderSp, FxEngine.RollDice(1, 5)];
+      C_Class.MAGE_LEVEL: portraitBody := GDConsts.npcMageBodies[genderSp, FxEngine.RollDice(1, 5)];
+      C_Class.THIEF_LEVEL: portraitBody := GDConsts.npcThiefBodies[genderSp, FxEngine.RollDice(1, 5)];
       else portraitBody := GDConsts.npcFighterBodies[genderSp, FxEngine.RollDice(1, 5)];
     end;
     portraitHead := GDConsts.npcPortraitHeads[genderSp, FxEngine.RollDice(1, 8)];
@@ -482,15 +474,15 @@ var
   used: array[0..7] of Byte;
 begin
   creature^.orderNumber := 255;
-  if GDVars.creatureList = nil then
-    GDVars.creatureList := creature
-  else begin
+  if GDVars.creatureList = nil then begin
+    GDVars.creatureList := creature;
+    GDVars.curChar := creature;
+  end else begin
     p := GDVars.creatureList;
     while p^.nextCharAddr <> nil do
       p := p^.nextCharAddr;
     p^.nextCharAddr := creature;
   end;
-  GDVars.curChar := creature;
   FillChar(used, SizeOf(used), 0);
   p := GDVars.creatureList;
   while p <> nil do begin
@@ -498,15 +490,14 @@ begin
       used[p^.orderNumber] := 1;
     p := p^.nextCharAddr;
   end;
+  GDVars.curChar := creature;
   with GDVars.curChar^ do begin
     orderNumber := 0;
     while (orderNumber < 8) and (used[orderNumber] <> 0) do
       Inc(orderNumber);
   end;
   Inc(GDVars.zone1^[C_Gbvm.PARTY_SIZE]);
-  { C_Npc.NON_PLAYER set }
-  if creature^.npc > $7F then
-    ClassCal.RecalcClassStats(creature);
+  ClassCal.RecalcClassStats(creature);
 end;
 
 procedure LoadGame;
@@ -570,16 +561,13 @@ begin
     { The .itm and .spc files are erased only when the .cha file exists. }
     if DaxIo.FileExists(fn + '.cha') then begin
       Assign(f, fn + '.cha');
-      Close(f);
       Erase(f);
       if DaxIo.FileExists(fn + '.itm') then begin
         Assign(f, fn + '.itm');
-        Close(f);
         Erase(f);
       end;
       if DaxIo.FileExists(fn + '.spc') then begin
         Assign(f, fn + '.spc');
-        Close(f);
         Erase(f);
       end;
     end;
@@ -672,17 +660,14 @@ begin
     fn := GDVars.saveDir + DaxIo.SanitizeFileName(DaxIo.SanitizeString(p^.name, '.'));
     if DaxIo.FileExists(fn + '.cha') then begin
       Assign(f, fn + '.cha');
-      Close(f);
       Erase(f);
     end;
     if DaxIo.FileExists(fn + '.itm') then begin
       Assign(f, fn + '.itm');
-      Close(f);
       Erase(f);
     end;
     if DaxIo.FileExists(fn + '.spc') then begin
       Assign(f, fn + '.spc');
-      Close(f);
       Erase(f);
     end;
     p := p^.nextCharAddr;

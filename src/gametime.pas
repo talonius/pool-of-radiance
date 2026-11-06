@@ -4,11 +4,8 @@ unit GameTime;
 
 interface
 
-uses Types, C_Time, C_Msg, GDConsts, GDVars, Crt, TextRend, CharHlp, MenuCore, Magic, FxEngine, C_Keys, C_Ifc, C_Gbvm,
-  C_Spell;
-
-{ Empty routine with no callers. }
-procedure NoopRest;
+uses Types, C_Time, C_Msg, GDConsts, GDVars, Crt, TextRend, CharHlp, MenuCore, Magic, C_Keys, C_Ifc, C_Gbvm, C_Spell,
+  FxEngine;
 
 { Advances the game clock, kept in the GBVM clock words, one unit at a time with carries, then times out the effects by
   the same duration.
@@ -49,6 +46,7 @@ var
   found: Boolean;
   tail: Types.PEffectRec;
   prev: Types.PEffectRec;
+  nxt: Types.PEffectRec;
   e: Types.PEffectRec;
 begin
   if GDVars.ifcState <> C_Ifc.CAMPING then
@@ -78,6 +76,7 @@ begin
         e := Types.PEffectRec(cur^.effectsAddr);
         tail := Types.PEffectRec(cur^.effectsAddr);
         prev := Types.PEffectRec(cur^.effectsAddr);
+        nxt := prev^.next;
         if cur^.effectsAddr <> nil then
           while tail^.next <> nil do tail := tail^.next;
         done := False;
@@ -90,13 +89,14 @@ begin
             GDVars.effFlags[i] := 1;
             e := e^.next;
           end else begin
+            nxt := e^.next;
             FxEngine.RemoveEffect(cur, e^.id, e);
             { prev is the list head when the removed effect was the head's successor; the walk then restarts at the
               head, which is aged again in this step }
             if prev = Types.PEffectRec(cur^.effectsAddr) then
               e := Types.PEffectRec(cur^.effectsAddr)
             else
-              e := prev^.next;
+              e := nxt;
           end;
           prev := Types.PEffectRec(cur^.effectsAddr);
           while (prev <> nil) and (prev <> e) and (prev^.next <> e) do
@@ -506,10 +506,6 @@ begin
   end;
   TextRend.ClearRect(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM);
   GDVars.suppressBorder := 0;
-end;
-
-procedure NoopRest;
-begin
 end;
 
 begin

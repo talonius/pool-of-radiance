@@ -4,8 +4,8 @@ unit Temple;
 
 interface
 
-uses Types, Crt, C_Msg, GDConsts, GDVars, TextRend, Border, CharHlp, MenuCore, EclMenu, ViewChar, Money, Magic,
-  FxEngine, C_Effect, C_Keys, C_Class, C_Status, C_Ifc;
+uses Types, Crt, C_Msg, GDConsts, GDVars, TextRend, EclMenu, Money, Magic, FxEngine, C_Effect, C_Keys, C_Class,
+  C_Status, C_Ifc, CharHlp, MenuCore, ViewChar, Border;
 
 { Runs the temple: heal, view, take, pool, share and appraise, with Take and Share offered only while there is pooled
   money. The pooled money starts empty. H and P are told apart from the extended Up and Down keys; Home and End select

@@ -4,10 +4,7 @@ unit View3D;
 
 interface
 
-uses Types, GDConsts, GDVars, Blit, DaxIo, GameIo, Sym8x8, C_Dir;
-
-{ Empty routine with no callers. }
-procedure InitView3D;
+uses Types, GDConsts, GDVars, Blit, Sym8x8, C_Dir, DaxIo, GameIo;
 
 { Sets the colors of the four bands of the 3D view's backdrop.
   @param(cSky The sky or ceiling.)
@@ -15,10 +12,6 @@ procedure InitView3D;
   @param(cHorz2 The horizon band below it.)
   @param(cFloor The floor.) }
 procedure SetView3DColors(cSky, cHorz1, cHorz2, cFloor: Byte);
-
-{ Fills the four bands of the 3D view's backdrop into the view buffer: the sky, the horizon line, the horizon band and
-  the floor. }
-procedure DrawBackdrop;
 
 { Reads the wall on one side of a 3D map cell. A cell off the map wraps to the far edge, except under ECL scripts 0 and
   10, where it has no wall.
@@ -43,9 +36,6 @@ function GetBarrierType(x, y: ShortInt; facing: Byte): Byte;
   @returns(The event byte.) }
 function GetMapEvent(x, y: ShortInt): Byte;
 
-{ Flushes the view buffer to the screen. }
-procedure DisplayViewBuf;
-
 { Draws the 3D view from a cell, or the automap while it is on. The view is the backdrop, then the walls row by row from
   two cells ahead to the party's own row: fronts, the corners between far fronts, and the side walls. It is flushed to
   the screen.
@@ -69,32 +59,15 @@ procedure LoadWallSet(fileId, wsSlot: Byte);
   @param(mapId The block of GEO.DAX that holds the map.) }
 procedure Load3DMap(mapId: Byte);
 
-{ Empty routine with no callers. }
-procedure ReleaseView3D;
+implementation
+
+procedure DisplayViewBuf; forward;
 
 { Draws the 11x11 automap around a cell into the view buffer and flushes it: each cell shows its walls as one of sixteen
   8x8 symbols, and the party's cell shows an arrow for its facing. The window stops at the map's edges.
   @param(x Map column of the party's cell.)
   @param(y Map row of the party's cell.)
   @param(facing The direction the party faces.) }
-procedure DrawAutoMap(x, y: ShortInt; facing: Byte);
-
-{ Draws one wall slot's rectangle of 8x8 symbols for a wall type into the view buffer, transparently, skipping empty
-  symbols and cells outside the 11x11 view.
-  @param(x View column of the rectangle's left edge.)
-  @param(y View row of the rectangle's top edge.)
-  @param(wallType The wall type.)
-  @param(slot The view slot, 0 to 9.) }
-procedure DrawWallSlice(x, y: ShortInt; wallType, slot: Byte);
-
-{ Tells whether a cell is on the 16x16 map.
-  @param(x The map column.)
-  @param(y The map row.)
-  @returns(True when the cell is on the map.) }
-function Valid3DCoords(x, y: ShortInt): Boolean;
-
-implementation
-
 procedure DrawAutoMap(x, y: ShortInt; facing: Byte);
 var
   pwx: ShortInt;
@@ -141,6 +114,8 @@ begin
   GDVars.floorBandColor := cFloor;
 end;
 
+{ Fills the four bands of the 3D view's backdrop into the view buffer: the sky, the horizon line, the horizon band and
+  the floor. }
 procedure DrawBackdrop;
 begin
   Blit.FillPicRect(2, 16, 11, 43, GDVars.skyCeilingColor, GDConsts.iconColorMap,
@@ -150,6 +125,12 @@ begin
   Blit.FillPicRect(2, 62, 11, 42, GDVars.floorBandColor, GDConsts.iconColorMap, GDVars.viewBuffer);
 end;
 
+{ Draws one wall slot's rectangle of 8x8 symbols for a wall type into the view buffer, transparently, skipping empty
+  symbols and cells outside the 11x11 view.
+  @param(x View column of the rectangle's left edge.)
+  @param(y View row of the rectangle's top edge.)
+  @param(wallType The wall type.)
+  @param(slot The view slot, 0 to 9.) }
 procedure DrawWallSlice(x, y: ShortInt; wallType, slot: Byte);
 var
   colLim: Integer;
@@ -169,6 +150,10 @@ begin
     end;
 end;
 
+{ Tells whether a cell is on the 16x16 map.
+  @param(x The map column.)
+  @param(y The map row.)
+  @returns(True when the cell is on the map.) }
 function Valid3DCoords(x, y: ShortInt): Boolean;
 begin
   if (x > 15) or (x < 0) or (y > 15) or (y < 0) then
@@ -231,6 +216,7 @@ begin
   end;
 end;
 
+{ Flushes the view buffer to the screen. }
 procedure DisplayViewBuf;
 begin
   Blit.FlushView;
@@ -243,8 +229,8 @@ var
   fB: Byte;
   cxPos: Integer;
   cyPos: Integer;
-  dxF: Integer;
-  dyF: Integer;
+  dxF: Word;
+  dyF: Word;
   wx: Integer;
   wy: Integer;
   side: Byte;
@@ -532,14 +518,6 @@ begin
   Move(data^[offset], GDVars.map3d^.barriers, SizeOf(Types.TGeoPlane));
   FreeMem(data, sizeRead);
   GDVars.zone0^.mapId.value := mapId;
-end;
-
-procedure InitView3D;
-begin
-end;
-
-procedure ReleaseView3D;
-begin
 end;
 
 begin

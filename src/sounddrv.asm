@@ -1,10 +1,11 @@
-; Timer-driven PC-speaker and Tandy SN76489 sequencer, linked into SoundDrv.
-; InstallSoundTimer hooks INT 8; UninstallSoundTimer restores it and silences output.
-; ProgramSpeakerVoices and ProgramTandyVoices load four stream pointers per tune.
-; SetSoundOutputEnabled gates output while active sequencers keep advancing.
-; This code segment owns voice state, note tables, waveforms and music streams.
-CODE    SEGMENT BYTE PUBLIC             ; Leave the segment class unset so the Pascal linker can
-        ASSUME  CS:CODE, DS:CODE        ; merge this object into the unit's code segment.
+; PC-speaker and Tandy SN76489 timer sequencer, linked into SoundDrv by SOUNDDRV.OBJ.
+; Owns voice blocks, tune streams, envelopes and modulation tables in CODE.
+; Pascal far entries install/remove INT 8, load tunes and control the output gate.
+; Four voices per device are stepped; the speaker uses the first active voice.
+; The displaced BIOS handler runs every thirteenth tick.
+
+CODE    SEGMENT BYTE PUBLIC 'CODE'
+        ASSUME  CS:CODE, DS:CODE
         PUBLIC  InstallSoundTimer, UninstallSoundTimer
         PUBLIC  ProgramSpeakerVoices, ProgramTandyVoices, SetSoundOutputEnabled
 
@@ -14,27 +15,26 @@ CODE    SEGMENT BYTE PUBLIC             ; Leave the segment class unset so the P
 ; ---------------------------------------------------------------------------
 VOICE   STRUC
 vfDuration      dw      0       ; ticks until the sequencer next steps this voice
-vfStream        dw      0       ; stream cursor; 0 = no stream to resume
+vfStream        dw      0       ; stream pointer; 0 = the voice is idle
 vfPeriod        dw      0       ; pitch accumulator
 vfPeriodAdd     dw      0       ; added to vfPeriod each tick -- a pitch slide
 vfOutPeriod     dw      0       ; vfPeriod plus the LFO; this is what the chip gets
 vfLevel         dw      0       ; output level
 vfLevelAdd      dw      0       ; added to vfLevel each tick
-vfTempo         dw      0       ; low byte scales noteLen; a zero low byte is taken as 1
-vfReleaseLead   dw      0       ; ticks before the note ends at which release starts
-                                ;   seq_note sets vfGateLen to duration minus this
+vfTempo         dw      0       ; low byte scales duration; 0 or 1 leaves it unchanged
+vfReleaseLead   dw      0       ; release lead; unused
 vfTranspose     dw      0       ; added to a note's pitch before the octave reduction
-vfGateLen       dw      0       ; release countdown; expiry selects the 5th envelope pair
+vfGateLen       dw      0       ; when it expires the envelope restarts at its 5th pair
 vfEnvBase       dw      0       ; base of this voice's (value,ticks) envelope list
 vfEnvPos        dw      0       ; byte offset into that list
 vfEnvWait       dw      0       ; ticks left in the current envelope segment
-vfLfoTable      dw      0       ; LFO waveform: lfoSine, lfoZero or lfoNoise
+vfLfoTable      dw      0       ; base pointer into the LFO samples
 vfLfoPhase      dw      0       ; LFO phase accumulator
 vfLfoRate       dw      0       ; added to vfLfoPhase each tick
 vfLfoDepth      dw      0       ; signed multiplier on the waveform sample
-vfLfoWrap       dw      0       ; subtracted once when the updated phase reaches it
+vfLfoWrap       dw      0       ; vfLfoPhase wraps here
 vfLoopCounterA  dw      0       ; SLOOP counter
-vfLoopCounterB  dw      0       ; second loop counter; unused by these streams
+vfLoopCounterB  dw      0       ; SLOOP counter for a loop nested inside the first
                 dw      3 dup(0)        ; Reserved words, cleared with the voice state.
 VOICE   ENDS
 
@@ -43,7 +43,7 @@ VOICE   ENDS
 ; then shifts its period right by the octave number.
 ; ---------------------------------------------------------------------------
 ; PC-speaker divisors for PIT channel 2, starting at C1.
-; Nominal frequency at a 1193182 Hz PIT clock in mode 3 is clock / divisor.
+; Nominal frequencies below assume a 1193182 Hz PIT input.
 spkC    equ 8E84h    ; C1    32.704 Hz
 spkCS   equ 8684h    ; C#1   34.649 Hz
 spkD    equ 7EF7h    ; D1    36.710 Hz
@@ -57,28 +57,36 @@ spkA    equ 54BDh    ; A1    55.003 Hz
 spkAS   equ 4FFCh    ; A#1   58.272 Hz
 spkB    equ 4B7Eh    ; B1    61.740 Hz
 
-; Tandy SN76489 periods with nominal note names, starting at A2.
-; Each 10-bit period is shifted left by six; tick_tandy reverses that for output.
-snA2    equ 0FFC0h   ; A2  period=1023
-snAS2   equ 0F140h   ; A#2 period=965
-snB2    equ 0E3C0h   ; B2  period=911
-snC3    equ 0D700h   ; C3  period=860
-snCS3   equ 0CB40h   ; C#3 period=813
-snD3    equ 0BF80h   ; D3  period=766
-snDS3   equ 0B4C0h   ; D#3 period=723
-snE3    equ 0AA80h   ; E3  period=682
-snF3    equ 0A100h   ; F3  period=644
-snFS3   equ 9800h    ; F#3 period=608
-snG3    equ 8F80h    ; G3  period=574
-snGS3   equ 8740h    ; G#3 period=541
+; Tandy SN76489 periods with nominal note names starting at A2.
+; Each 10-bit period is shifted left by six; tick_tandy shifts it back before output.
+snA2    equ 0FFC0h   ; A2  n=1023
+snAS2   equ 0F140h   ; A#2 n=965
+snB2    equ 0E3C0h   ; B2  n=911
+snC3    equ 0D700h   ; C3  n=860
+snCS3   equ 0CB40h   ; C#3 n=813
+snD3    equ 0BF80h   ; D3  n=766
+snDS3   equ 0B4C0h   ; D#3 n=723
+snE3    equ 0AA80h   ; E3  n=682
+snF3    equ 0A100h   ; F3  n=644
+snFS3   equ 9800h    ; F#3 n=608
+snG3    equ 8F80h    ; G3  n=574
+snGS3   equ 8740h    ; G#3 n=541
 
 ; ---------------------------------------------------------------------------
-; Driver state.  The ISR and the voice writers reach all of it through CS.
+; Driver state.  The ISR and the voice writers reach all of it with DS = CODE.
 ; ---------------------------------------------------------------------------
 divCount        db      13              ; ticks left before the next BIOS INT 8 chain
-seqBusy         db      0               ; protects voice-block loading from ISR stepping
+seqBusy         db      0               ; nonzero skips ISR sequencing during voice updates
 voiceLeft       db      0               ; voices still to visit this pass, 4 down to 1
 blockSize       db      SIZE VOICE      ; seq_note multiplies a voice index by it
+exitCount       dw      0               ; Ticks until forced shutdown; zero disables the countdown.
+
+; Shutdown message with bit 7 set in every byte. The timer handler
+; clears that bit before displaying the first 33 bytes.
+exitMsg         db      0D2h,0F5h,0EEh,0ADh,0F4h,0E9h,0EDh,0E5h,0A0h,0A0h,0C5h,0F2h,0F2h,0EFh,0F2h,0A0h
+                db      0B2h,0B0h,0B9h,0A0h,0E1h,0F4h,0A0h,0B0h,0C2h,0C1h,0C4h,0BAh,0B0h,0B0h,0B3h,0B8h
+                db      08Ah,08Dh
+
 curTune         dw      0               ; tune id loaded; 0 = silent
 seqVoice        dw      0               ; the voice block seq_proc is running
 voiceBase       dw      0               ; block array of the device being ticked
@@ -86,131 +94,97 @@ freqBase        dw      0               ; note table of the device being ticked
 seqRet          dw      0               ; the stream pointer SCALL saved -- one level only
 voiceTune       db      0,0,0,0         ; tune id per voice; seq_end clears a voice's entry
                                         ;   when that voice runs out of stream
-outputOn        db      1               ; master gate.  At 0 the sequencers keep running
-                                        ;   and the device writers silence the hardware
+outputOn        db      1               ; zero mutes output while the sequencers keep running
 
-; Sparse straight/dotted note durations. seq_note uses the note byte AND 1Fh,
-; then scales the selected entry by the low byte of vfTempo.
+; Duration table: 3:4 pairs double at each step. Notes carry explicit durations,
+; so nothing reads this table.
 noteLen         db      000h,000h,000h,002h,000h,003h,004h,000h,006h,008h,000h,00Ch,010h,000h,018h,020h
                 db      000h,030h,040h
 
 ; Sequencer command dispatch for stream bytes 0FAh through 0FFh, in that order.
-; SRESET uses seq_c_clear's tail without selecting another voice.
 cmdTable        dw      seq_c_reset, seq_c_ret, seq_c_call
                 dw      seq_c_clear, seq_c_loop, seq_c_set
 
-; Four speaker voice blocks; nonzero song pointers clear them.
-spkrBlocks      db      032h,034h,052h,008h,05Bh,0CDh,000h,00Ch,000h,001h,000h,004h,030h,018h,000h,000h
-                db      000h,01Bh,000h,002h,030h,014h,000h,000h,000h,02Bh,000h,000h,000h,014h,000h,000h
-                db      000h,008h,000h,000h,000h,014h,000h,000h,000h,01Fh,000h,006h,030h,04Ch,000h,000h
-                db      000h,007h,000h,000h,000h,018h,000h,000h,000h,010h,000h,006h,030h,050h,000h,000h
-                db      000h,013h,000h,008h,090h,010h,000h,000h,000h,005h,000h,008h,090h,010h,000h,002h
-                db      000h,00Fh,000h,000h,000h,01Ch,000h,000h,000h,016h,000h,000h,000h,028h,000h,000h
-                db      000h,025h,000h,000h,000h,024h,000h,000h,000h,02Ch,000h,000h,000h,02Ch,000h,000h
-                db      000h,033h,000h,000h,000h,02Ch,000h,000h,000h,042h,000h,000h,000h,028h,000h,000h
-                db      000h,050h,000h,000h,000h,024h,000h,000h,000h,057h,000h,008h,090h,010h,000h,000h
-                db      000h,05Ch,000h,000h,000h,024h,000h,000h,000h,069h,000h,000h,000h,028h,000h,000h
-                db      000h,078h,000h,008h,090h,010h,000h,002h,000h,07Ch,000h,000h,000h,018h,000h,000h
-                db      000h,087h,000h,000h,000h,028h,000h,000h,000h,08Eh,000h,000h,000h,024h,000h,000h
+; Four PC-speaker voices, cleared when a tune starts.
+spkrBlocks      VOICE   <>
+                VOICE   <>
+                VOICE   <>
+                VOICE   <>
 
-; Four spare voice blocks; not selected by these streams.
-spkrSpare       db      000h,095h,000h,000h,000h,020h,000h,000h,000h,099h,000h,008h,090h,010h,000h,000h
-                db      000h,004h,000h,008h,090h,010h,000h,001h,000h,007h,000h,008h,090h,010h,000h,000h
-                db      000h,00Bh,000h,000h,000h,01Ch,000h,000h,000h,014h,000h,000h,000h,024h,000h,000h
-                db      000h,01Bh,000h,000h,000h,028h,000h,000h,000h,022h,000h,000h,000h,020h,000h,000h
-                db      000h,026h,000h,008h,090h,010h,000h,000h,000h,005h,000h,008h,090h,010h,000h,002h
-                db      000h,014h,000h,000h,000h,020h,000h,000h,000h,01Bh,000h,000h,000h,01Ch,000h,000h
-                db      000h,021h,000h,008h,090h,010h,000h,002h,000h,027h,000h,000h,000h,000h,000h,000h
-                db      00Bh,000h,000h,000h,0E6h,000h,0DDh,000h,001h,000h,00Ch,000h,0B6h,000h,0DDh,000h
-                db      0FDh,05Bh,0CDh,000h,001h,000h,020h,001h,00Dh,05Ch,0CDh,000h,0EDh,05Bh,0CDh,000h
-                db      035h,051h,00Bh,054h,047h,041h,053h,045h,054h,032h,034h,058h,032h,034h,052h,048h
-                db      05Ch,0CDh,000h,00Ch,000h,001h,000h,000h,000h,000h,000h,063h,000h,000h,000h,0E6h
-                db      000h,0DDh,000h,001h,000h,080h,070h,019h,05Ch,0CDh,000h,038h,05Ch,0CDh,000h,05Eh
+; Four unused voice blocks reserved after the active voices.
+spkrSpare       VOICE   <>
+                VOICE   <>
+                VOICE   <>
+                VOICE   <>
 
 spkrFreq        dw      spkC, spkCS, spkD, spkDS, spkE, spkF
                 dw      spkFS, spkG, spkGS, spkA, spkAS, spkB
 
-spkrVoice       dw      0               ; the block driving PIT channel 2 this pass
+spkrVoice       dw      0               ; the block currently driving PIT channel 2
 
-; Four Tandy voice blocks; nonzero song pointers clear them.
-tandyBlocks     db      05Ch,0CDh,000h,00Bh,054h,047h,041h,053h,045h,054h,032h,034h,058h,032h,034h,02Ah
-                db      05Ah,010h,050h,04Ch,041h,059h,045h,052h,043h,04Fh,04Ch,04Fh,052h,054h,041h,042h
-                db      04Ch,045h,052h,0A6h,05Ch,0CDh,000h,00Ch,000h,001h,000h,001h,000h,000h,000h,007h
-                db      000h,000h,000h,0E6h,000h,0DDh,000h,001h,000h,007h,000h,0B6h,000h,0DDh,000h,096h
-                db      05Ch,0CDh,000h,090h,055h,00Bh,054h,048h,045h,032h,034h,058h,032h,034h,053h,045h
-                db      054h,053h,000h,000h,000h,024h,000h,0DAh,05Ch,0CDh,000h,00Ch,000h,001h,000h,000h
-                db      000h,000h,000h,001h,000h,000h,000h,0E6h,000h,0DDh,000h,001h,000h,008h,000h,09Fh
-                db      027h,0CDh,000h,004h,055h,006h,089h,0E5h,002h,006h,089h,0ECh,004h,05Dh,004h,0CBh
-                db      002h,000h,002h,000h,000h,008h,000h,014h,001h,000h,000h,002h,00Ah,0EBh,0CAh,000h
-; Fourth Tandy voice.
-tandyVoice3     db      09Ah,001h,013h,000h,002h,000h,00Fh,000h,000h,01Bh,000h,00Ch,099h,001h,002h,006h
-                db      083h,07Eh,004h,006h,004h,000h,002h,000h,02Eh,000h,00Ah,076h,090h,000h,0A1h,001h
-                db      01Ch,000h,002h,006h,083h,03Eh,00Eh,008h,090h,010h,000h,002h,000h,004h,000h,002h
+tandyBlocks     VOICE   <>
+                VOICE   <>
+                VOICE   <>
+tandyVoice3     VOICE   <>              ; Fourth Tandy voice.
 
-; Four spare Tandy voice blocks; not selected by these streams.
-tandySpare      db      000h,042h,000h,00Ah,075h,06Eh,000h,0ABh,001h,03Ah,000h,002h,004h,00Eh,004h,0E8h
-                db      00Eh,000h,000h,020h,000h,000h,000h,002h,000h,04Fh,000h,000h,05Bh,000h,00Ch,0AAh
-                db      001h,002h,000h,067h,000h,002h,004h,00Eh,004h,0E8h,00Eh,000h,000h,01Ch,000h,000h
-                db      000h,002h,000h,036h,000h,000h,071h,000h,00Ah,0EBh,096h,000h,0B4h,001h,053h,000h
-                db      00Ch,0ACh,001h,000h,075h,000h,00Ch,0B0h,001h,002h,006h,08Bh,046h,004h,006h,004h
-                db      0A3h,00Eh,008h,090h,010h,000h,002h,000h,002h,000h,024h,000h,000h,081h,000h,000h
-                db      099h,000h,002h,004h,055h,006h,089h,0E5h,002h,006h,089h,0ECh,004h,05Dh,004h,0CAh
-                db      006h,002h,000h,002h,000h,0B2h,000h,000h,0A8h,000h,00Ch,0B6h,001h,000h,0B8h,000h
-                db      014h,0BBh,000h,002h,004h,0B8h,006h,001h,000h,004h,050h,002h,000h,0D3h,000h,004h
-                db      00Eh,004h,0E8h,00Eh,000h,000h,02Ch,000h,000h,000h,002h,00Ah,0EBh,0D6h,001h,011h
-                db      001h,0CBh,000h,00Ch,006h,001h,004h,03Dh,006h,0FFh,000h,00Ah,075h,03Dh,001h,017h
-                db      001h,0EBh,000h,002h,006h,031h,0C0h,004h,050h,002h,000h,003h,001h,004h,00Eh,004h
+; Four unused Tandy voice blocks.
+tandySpare      VOICE   <>
+                VOICE   <>
+                VOICE   <>
+                VOICE   <>
 
 tandyFreq       dw      snA2, snAS2, snB2, snC3, snCS3, snD3
                 dw      snDS3, snE3, snF3, snFS3, snG3, snGS3
 
 ; ---------------------------------------------------------------------------
 ; SONG TABLES.  One row per tune id, four stream pointers per row -- voice 0 to
-; voice 3. The voice writers index by id * 8; zero skips clearing/loading that block.
+; voice 3. Both voice programmers index by id * 8; a zero pointer preserves that voice.
 ; ---------------------------------------------------------------------------
-; Speaker output selects one of four voices; later streams arrange notes on voices 0..2.
-songTableA      dw      silentA,    silentA,    silentA,    silentA      ; tune  0
-                dw      tuneA01_v0, silentA,    silentA,    silentA      ; tune  1
-                dw      tuneA02_v0, silentA,    silentA,    silentA      ; tune  2
-                dw      tuneA03_v0, silentA,    silentA,    silentA      ; tune  3
-                dw      tuneA04_v0, silentA,    silentA,    silentA      ; tune  4
-                dw      tuneA05_v0, silentA,    silentA,    silentA      ; tune  5
-                dw      tuneA06_v0, silentA,    silentA,    silentA      ; tune  6
-                dw      tuneA07_v0, silentA,    silentA,    silentA      ; tune  7
-                dw      tuneA08_v0, silentA,    silentA,    silentA      ; tune  8
-                dw      tuneA09_v0, silentA,    silentA,    silentA      ; tune  9
-                dw      tuneA10_v0, silentA,    silentA,    silentA      ; tune 10
-                dw      tuneA11_v0, silentA,    silentA,    silentA      ; tune 11
-                dw      tuneA12_v0, 0,          0,          0            ; tune 12
-                dw      tuneA13_v0, 0,          0,          0            ; tune 13
-                dw      tuneA14_v0, 0,          0,          0            ; tune 14
-                dw      tuneA15_v0, 0,          0,          0            ; tune 15
-                dw      tuneA16_v0, 0,          0,          0            ; tune 16
-                dw      tuneA17_v0, 0,          0,          0            ; tune 17
-                dw      tuneA18_v0, 0,          0,          0            ; tune 18
-                dw      tuneA19_v0, 0,          0,          0            ; tune 19
+; Speaker rows use voice 0; tune 20 also configures other blocks from its setup stream.
+songTableA      dw      silentA,     silentA,     silentA,     silentA      ; tune  0
+                dw      tuneA01_v0,  silentA,     silentA,     silentA      ; tune  1
+                dw      tuneA02_v0,  silentA,     silentA,     silentA      ; tune  2
+                dw      tuneA03_v0,  silentA,     silentA,     silentA      ; tune  3
+                dw      tuneA04_v0,  silentA,     silentA,     silentA      ; tune  4
+                dw      tuneA05_v0,  silentA,     silentA,     silentA      ; tune  5
+                dw      tuneA06_v0,  silentA,     silentA,     silentA      ; tune  6
+                dw      tuneA07_v0,  silentA,     silentA,     silentA      ; tune  7
+                dw      tuneA08_v0,  silentA,     silentA,     silentA      ; tune  8
+                dw      tuneA09_v0,  silentA,     silentA,     silentA      ; tune  9
+                dw      tuneA10_v0,  silentA,     silentA,     silentA      ; tune 10
+                dw      tuneA11_v0,  silentA,     silentA,     silentA      ; tune 11
+                dw      tuneA12_v0,  silentA,     silentA,     silentA      ; tune 12
+                dw      tuneA13_v0,  silentA,     silentA,     silentA      ; tune 13
+                dw      tuneA14_v0,  silentA,     silentA,     silentA      ; tune 14
+                dw      tuneA15_v0,  silentA,     silentA,     silentA      ; tune 15
+                dw      tuneA16_v0,  silentA,     silentA,     silentA      ; tune 16
+                dw      tuneA17_v0,  silentA,     silentA,     silentA      ; tune 17
+                dw      tuneA18_v0,  silentA,     silentA,     silentA      ; tune 18
+                dw      tuneA19_v0,  silentA,     silentA,     silentA      ; tune 19
+                dw      tuneA20_v0,  0,           0,           0            ; tune 20
 
-; Tandy streams use three tone voices and the noise voice.
-songTableB      dw      silentB,    silentB,    silentB,    silentB      ; tune  0
-                dw      tuneB01_v0, tuneB01_v1, tuneB01_v2, silentB      ; tune  1
-                dw      silentB,    silentB,    silentB,    tuneB02_v3   ; tune  2
-                dw      tuneB03_v0, tuneB03_v1, tuneB03_v2, silentB      ; tune  3
-                dw      tuneB04_v0, silentB,    tuneB04_v2, tuneB04_v3   ; tune  4
-                dw      tuneB05_v0, silentB,    silentB,    silentB      ; tune  5
-                dw      silentB,    silentB,    tuneB06_v2, tuneB06_v3   ; tune  6
-                dw      tuneB07_v0, tuneB07_v1, silentB,    silentB      ; tune  7
-                dw      silentB,    silentB,    silentB,    tuneB08_v3   ; tune  8
-                dw      silentB,    silentB,    silentB,    tuneB09_v3   ; tune  9
-                dw      silentB,    silentB,    tuneB10_v2, tuneB10_v3   ; tune 10
-                dw      tuneB11_v0, tuneB11_v1, tuneB11_v2, silentB      ; tune 11
-                dw      tuneB12_v0, silentB,    silentB,    silentB      ; tune 12
-                dw      tuneB13_v0, silentB,    silentB,    silentB      ; tune 13
-                dw      tuneB14_v0, silentB,    silentB,    silentB      ; tune 14
-                dw      tuneB15_v0, silentB,    silentB,    silentB      ; tune 15
-                dw      tuneB16_v0, silentB,    silentB,    silentB      ; tune 16
-                dw      tuneB17_v0, silentB,    silentB,    silentB      ; tune 17
-                dw      tuneB18_v0, silentB,    silentB,    silentB      ; tune 18
-                dw      tuneB19_v0, silentB,    silentB,    silentB      ; tune 19
+; Tandy rows include tone and noise streams.
+songTableB      dw      silentB,     silentB,     silentB,     silentB      ; tune  0
+                dw      tuneB01_v0,  tuneB01_v1,  tuneB01_v2,  silentB      ; tune  1
+                dw      silentB,     silentB,     silentB,     tuneB02_v3   ; tune  2
+                dw      tuneB03_v0,  tuneB03_v1,  tuneB03_v2,  silentB      ; tune  3
+                dw      tuneB04_v0,  silentB,     tuneB04_v2,  tuneB04_v3   ; tune  4
+                dw      tuneB05_v0,  silentB,     silentB,     silentB      ; tune  5
+                dw      silentB,     silentB,     tuneB06_v2,  tuneB06_v3   ; tune  6
+                dw      tuneB07_v0,  tuneB07_v1,  silentB,     silentB      ; tune  7
+                dw      silentB,     silentB,     silentB,     tuneB08_v3   ; tune  8
+                dw      silentB,     silentB,     silentB,     tuneB09_v3   ; tune  9
+                dw      silentB,     silentB,     tuneB10_v2,  tuneB10_v3   ; tune 10
+                dw      tuneB11_v0,  tuneB11_v1,  tuneB11_v2,  silentB      ; tune 11
+                dw      silentB,     silentB,     tuneB12_v2,  tuneB12_v3   ; tune 12
+                dw      tuneB13_v0,  silentB,     tuneB13_v2,  tuneB13_v3   ; tune 13
+                dw      silentB,     silentB,     tuneB14_v2,  tuneB14_v3   ; tune 14
+                dw      silentB,     silentB,     tuneB15_v2,  tuneB15_v3   ; tune 15
+                dw      silentB,     silentB,     tuneB16_v2,  tuneB16_v3   ; tune 16
+                dw      silentB,     silentB,     tuneB17_v2,  silentB      ; tune 17
+                dw      tuneB18_v0,  silentB,     tuneB18_v2,  tuneB18_v3   ; tune 18
+                dw      tuneB19_v0,  silentB,     silentB,     silentB      ; tune 19
+                dw      tuneB20_v0,  silentB,     silentB,     silentB      ; tune 20
 
 ; ---------------------------------------------------------------------------
 ; LFO WAVEFORMS.  A voice picks one by pointing vfLfoTable at it; voice_step reads
@@ -234,10 +208,10 @@ lfoSine         db      000h,003h,006h,009h,00Ch,00Fh,012h,015h,018h,01Bh,01Eh,0
                 db      0A7h,0A9h,0ABh,0AEh,0B0h,0B2h,0B5h,0B7h,0BAh,0BDh,0BFh,0C2h,0C5h,0C7h,0CAh,0CDh
                 db      0D0h,0D3h,0D6h,0D9h,0DCh,0DFh,0E2h,0E5h,0E8h,0EBh,0EEh,0F1h,0F4h,0F7h,0FAh,0FDh
 
-; Sixteen zero samples; setupA/setupB voice 0 also index the adjacent lfoFlat.
+; Zero samples, followed by constant samples; the selected wrap can span both regions.
 lfoZero         db      000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h
 
-; Sixteen +120 samples, read by lfoZero users at indices 16..31.
+; Constant samples for a positive pitch offset.
 lfoFlat         db      078h,078h,078h,078h,078h,078h,078h,078h,078h,078h,078h,078h,078h,078h,078h,078h
 
 ; Pseudo-random waveform for percussion and sound effects.
@@ -275,8 +249,7 @@ lfoNoise        db      029h,023h,0BEh,084h,0E1h,06Ch,0D6h,0AEh,052h,090h,049h,0
                 db      099h,0CDh,0D3h,00Dh,0F0h,044h,03Ah,0B4h,0A6h,066h,053h,033h,00Bh,0CBh,0A1h,010h
 
 ; ---------------------------------------------------------------------------
-; THE STREAMS.  One label per stream, reached from songTableA/songTableB or from
-; an SCALL, an SLOOP or a vfEnvBase inside another stream.
+; Streams and envelopes referenced by the song tables and stream operands.
 ; ---------------------------------------------------------------------------
 ; Pitches are scale degrees above the active note table's base -- C for the speaker
 ; table, A for the Tandy one -- not concert pitches.  seq_note adds the voice's
@@ -297,9 +270,7 @@ OCT     equ 12                      ; one octave
 REST    equ 7Fh                     ; the pitch that sounds nothing
 
 ; One macro per sequencer record, each emitting the record the driver decodes.
-; TASM splits macro arguments on whitespace as well as commas, so an
-; argument expression must carry none: NT_E+3*OCT, never NT_E + 3 * OCT.
-SRESET  MACRO                       ;; 0FAh -- reset pitch, envelope and LFO fields
+SRESET  MACRO                       ;; 0FAh -- clear the voice this stream is on
         db 0FAh
         ENDM
 SRET    MACRO                       ;; 0FBh -- back to the stream SCALL came from
@@ -309,11 +280,11 @@ SCALL   MACRO target                ;; 0FCh -- call a stream; seqRet holds one l
         db 0FCh
         dw target
         ENDM
-SCLEAR  MACRO vnum                  ;; 0FDh -- select voice vnum of the active device
-        db 0FDh                     ;;         and apply SRESET to its fields
+SCLEAR  MACRO vnum                  ;; 0FDh -- move this stream onto voice vnum of
+        db 0FDh                     ;;         the active device and clear it
         dw (vnum) * SIZE VOICE
         ENDM
-SLOOP   MACRO field, target         ;; 0FEh -- decrement unless zero; jump unless it reaches zero
+SLOOP   MACRO field, target         ;; 0FEh -- jump if field is zero or decrements to nonzero
         db 0FEh, field
         dw target
         ENDM
@@ -330,8 +301,8 @@ ENV_SETLEVEL equ 0FFFFh             ; in a segment's ticks slot: value is a leve
 SENV    MACRO value, ticks          ;; one envelope segment
         dw value, ticks
         ENDM
-SNOTE   MACRO vnum, len, pitch, last  ;; a note: voice, noteLen index, pitch, run-end
-        db ((vnum) SHL 5) OR (len), ((last) SHL 7) OR (pitch)
+SNOTE   MACRO vnum, len, pitch, last, dur   ; A note record with explicit duration; len is unused.
+        db ((vnum) SHL 5) OR (len), ((last) SHL 7) OR (pitch), dur
         ENDM
 
 tuneA10_v0:
@@ -351,17 +322,129 @@ tuneA10_v0:
         SWAIT   300
         SSET    vfLevel,         0
         SWAIT   0
+tuneA12_v0:
+        SSET    vfLevel,         3
+        SSET    vfPeriod,        2710h
+        SSET    vfLfoTable,      lfoNoise
+        SSET    vfLfoWrap,       2000h
+        SSET    vfLfoDepth,      2328h
+        SSET    vfLfoRate,       10h
+        SWAIT   25
+        SSET    vfLevel,         0
+        SWAIT   2
+        SSET    vfLevel,         3
+        SSET    vfPeriod,        1388h
+        SSET    vfLfoDepth,      0FA0h
+        SSET    vfPeriodAdd,     12Ch
+        SWAIT   80
+        SSET    vfLevel,         0
+        SWAIT   0
+tuneA13_v0:
+        SSET    vfLevel,         3
+        SSET    vfPeriod,        0BB8h
+        SSET    vfLfoTable,      lfoNoise
+        SSET    vfLfoWrap,       2000h
+        SSET    vfLfoDepth,      44Ch
+        SSET    vfLfoRate,       10h
+        SWAIT   2
+        SSET    vfLevel,         0
+        SWAIT   1
+        SSET    vfLevel,         3
+        SSET    vfPeriod,        834h
+        SSET    vfLfoDepth,      1F4h
+        SSET    vfPeriodAdd,     0FF9Ch
+        SWAIT   30
+        SSET    vfLevel,         0
+        SWAIT   0
+tuneA18_v0:
+        SSET    vfLevel,         3
+        SSET    vfPeriod,        1F40h
+        SSET    vfLfoTable,      lfoNoise
+        SSET    vfLfoWrap,       2000h
+        SSET    vfLfoDepth,      44Ch
+        SSET    vfLfoRate,       10h
+        SWAIT   2
+        SSET    vfLevel,         0
+        SWAIT   1
+        SSET    vfLevel,         3
+        SSET    vfPeriod,        17D4h
+        SSET    vfLfoDepth,      1F4h
+        SSET    vfPeriodAdd,     0FF9Ch
+        SWAIT   80
+        SSET    vfLevel,         0
+        SWAIT   0
+tuneA16_v0:
+        SSET    vfLevel,         3
+        SSET    vfLfoTable,      lfoNoise
+        SSET    vfLfoWrap,       2000h
+        SSET    vfLfoDepth,      3E8h
+        SSET    vfLfoRate,       10h
+        SSET    vfPeriodAdd,     0FFCEh
+        SSET    vfLoopCounterA,  4
+tuneA16_v0_loop:
+        SSET    vfPeriod,        2710h
+        SWAIT   4
+        SSET    vfPeriod,        4E20h
+        SSET    vfLevel,         0
+        SWAIT   4
+        SSET    vfLevel,         3
+        SWAIT   4
+        SLOOP   vfLoopCounterA, tuneA16_v0_loop
+        SSET    vfLevel,         0
+        SWAIT   0
+tuneA17_v0:
+        SSET    vfLevel,         3
+        SSET    vfLfoTable,      lfoNoise
+        SSET    vfLfoWrap,       2000h
+        SSET    vfLfoDepth,      3E8h
+        SSET    vfLfoRate,       10h
+        SSET    vfPeriodAdd,     0FFCEh
+        SSET    vfLoopCounterA,  20
+tuneA17_v0_loop:
+        SSET    vfPeriod,        1388h
+        SWAIT   1
+        SSET    vfLevel,         0
+        SWAIT   1
+        SSET    vfLevel,         3
+        SSET    vfPeriod,        7530h
+        SWAIT   1
+        SLOOP   vfLoopCounterA, tuneA17_v0_loop
+        SSET    vfLevel,         0
+        SWAIT   0
+tuneA14_v0:
+        SSET    vfLevel,         3
+        SSET    vfPeriod,        2710h
+        SSET    vfLfoTable,      lfoNoise
+        SSET    vfLfoWrap,       2000h
+        SSET    vfLfoDepth,      1F4h
+        SSET    vfLfoRate,       10h
+        SSET    vfPeriodAdd,     0FFCEh
+        SWAIT   28
+        SSET    vfLevel,         0
+        SWAIT   0
+tuneA15_v0:
+        SSET    vfLevel,         3
+        SSET    vfPeriod,        4E20h
+        SSET    vfLfoTable,      lfoNoise
+        SSET    vfLfoWrap,       2000h
+        SSET    vfLfoDepth,      2710h
+        SSET    vfLfoRate,       10h
+        SWAIT   5
+        SSET    vfLevel,         0
+        SWAIT   1
+        SSET    vfLevel,         3
+        SSET    vfPeriod,        834h
+        SSET    vfLfoDepth,      898h
+        SSET    vfPeriodAdd,     64h
+        SWAIT   100
+        SSET    vfLevel,         0
+        SWAIT   0
 tuneA08_v0:
         SSET    vfLevel,         3
         SSET    vfPeriod,        0FA0h
-        SSET    vfPeriodAdd,     0FFECh
-        SSET    vfLfoTable,      lfoNoise
-        SSET    vfLfoWrap,       2000h
-        SSET    vfLfoDepth,      7D0h
-        SSET    vfLfoRate,       27h
-        SWAIT   20
-        SSET    vfPeriodAdd,     14h
-        SWAIT   40
+        SWAIT   5
+        SSET    vfPeriod,        3E8h
+        SWAIT   4
         SSET    vfLevel,         0
         SWAIT   0
 tuneA09_v0:
@@ -372,7 +455,7 @@ tuneA09_v0:
         SSET    vfLfoWrap,       2000h
         SSET    vfLfoDepth,      1770h
         SSET    vfLfoRate,       7Bh
-        SWAIT   20
+        SWAIT   8
         SSET    vfLevel,         0
         SWAIT   0
 tuneA07_v0:
@@ -384,32 +467,39 @@ tuneA07_v0_loop:
         SWAIT   12
         SSET    vfPeriodAdd,     277h
         SWAIT   8
-        SLOOP   vfLoopCounterA,  tuneA07_v0_loop
+        SLOOP   vfLoopCounterA, tuneA07_v0_loop
         SSET    vfLevel,         0
         SWAIT   0
-tuneA06_v0:
+tuneA02_v0:
         SSET    vfLevel,         3
         SSET    vfLfoTable,      lfoNoise
         SSET    vfLfoWrap,       2000h
-        SSET    vfLfoDepth,      258h
+        SSET    vfLfoDepth,      640h
         SSET    vfLfoRate,       19Bh
-        SSET    vfPeriod,        514h
+        SSET    vfPeriod,        10CCh
         SSET    vfPeriodAdd,     0Ah
-        SWAIT   10
-        SSET    vfPeriod,        8FCh
-        SWAIT   10
+        SWAIT   30
+        SSET    vfLfoDepth,      384h
+        SSET    vfPeriod,        514h
+        SSET    vfPeriodAdd,     50h
+        SWAIT   5
         SSET    vfLevel,         0
         SWAIT   0
 tuneA05_v0:
         SSET    vfLevel,         3
-        SSET    vfPeriod,        1A0h
-        SSET    vfLoopCounterA,  12
-tuneA05_v0_loop:
-        SSET    vfPeriodAdd,     0FFFEh
-        SWAIT   12
-        SSET    vfPeriodAdd,     2
-        SWAIT   8
-        SLOOP   vfLoopCounterA,  tuneA05_v0_loop
+        SSET    vfLoopCounterA,  5
+        SSET    vfPeriod,        1838h
+tuneA05_v0_loopOuter:
+        SSET    vfPeriodAdd,     0
+        SWAIT   6
+        SSET    vfLoopCounterB,  12
+tuneA05_v0_loopInner:
+        SSET    vfPeriodAdd,     0FC5Eh
+        SWAIT   1
+        SSET    vfPeriodAdd,     384h
+        SWAIT   1
+        SLOOP   vfLoopCounterB, tuneA05_v0_loopInner
+        SLOOP   vfLoopCounterA, tuneA05_v0_loopOuter
         SSET    vfLevel,         0
         SWAIT   0
 tuneA03_v0:
@@ -421,7 +511,7 @@ tuneA03_v0_loop:
         SWAIT   20
         SSET    vfPeriodAdd,     1F4h
         SWAIT   1
-        SLOOP   vfLoopCounterA,  tuneA03_v0_loop
+        SLOOP   vfLoopCounterA, tuneA03_v0_loop
         SSET    vfLevel,         0
         SWAIT   0
 tuneA04_v0:
@@ -430,48 +520,50 @@ tuneA04_v0:
         SSET    vfLfoWrap,       2000h
         SSET    vfLfoDepth,      2710h
         SSET    vfLfoRate,       10h
-        SSET    vfPeriod,        4E20h
-        SSET    vfPeriodAdd,     0FFABh
-        SWAIT   80
+        SSET    vfPeriod,        2EE0h
         SSET    vfLoopCounterA,  44
 tuneA04_v0_loop:
         SSET    vfPeriodAdd,     0F1F0h
         SWAIT   2
         SSET    vfPeriodAdd,     0E88h
         SWAIT   2
-        SLOOP   vfLoopCounterA,  tuneA04_v0_loop
-        SSET    vfPeriodAdd,     46h
-        SWAIT   120
+        SLOOP   vfLoopCounterA, tuneA04_v0_loop
         SSET    vfLevel,         0
         SWAIT   0
-tuneA02_v0:
+tuneA06_v0:
         SSET    vfLevel,         3
         SSET    vfLfoTable,      lfoNoise
         SSET    vfLfoWrap,       2000h
-        SSET    vfLfoDepth,      7D0h
+        SSET    vfLfoDepth,      0A28h
         SSET    vfLfoRate,       10h
-        SSET    vfPeriod,        0FA0h
+        SSET    vfPeriod,        1770h
+        SSET    vfPeriodAdd,     0FF60h
+        SWAIT   30
         SSET    vfPeriodAdd,     46h
-        SWAIT   25
+        SWAIT   35
         SSET    vfLevel,         0
         SWAIT   0
-; Empty stream: silence the voice and stop.
 silentA:
         SSET    vfLevel,         0
         SWAIT   0
 tuneA01_v0:
         SSET    vfLevel,         3
-        SSET    vfLfoTable,      lfoNoise
-        SSET    vfLfoWrap,       2000h
-        SSET    vfLfoDepth,      46h
-        SSET    vfLfoRate,       19h
-        SSET    vfLoopCounterA,  6
+        SSET    vfPeriod,        1388h
+        SSET    vfLfoTable,      lfoSine
+        SSET    vfLfoWrap,       1000h
+        SSET    vfLfoDepth,      1F4h
+        SSET    vfLfoRate,       4Eh
+        SSET    vfLoopCounterA,  40
 tuneA01_v0_loop:
-        SSET    vfPeriod,        3E8h
-        SWAIT   7
-        SSET    vfPeriod,        379h
-        SWAIT   7
-        SLOOP   vfLoopCounterA,  tuneA01_v0_loop
+        SSET    vfPeriodAdd,     0
+        SWAIT   2
+        SSET    vfPeriodAdd,     0FDADh
+        SWAIT   1
+        SSET    vfPeriodAdd,     0
+        SWAIT   2
+        SSET    vfPeriodAdd,     1F4h
+        SWAIT   1
+        SLOOP   vfLoopCounterA, tuneA01_v0_loop
         SSET    vfLevel,         0
         SWAIT   0
 tuneA11_v0:
@@ -485,1221 +577,13 @@ tuneA11_v0:
         SWAIT   30
         SSET    vfLevel,         0
         SWAIT   0
-tuneA12_v0:
-        SCALL   setupA
-        SNOTE   2, 12, NT_C+6*OCT,  1
-        SNOTE   2,  9, NT_DS+6*OCT, 1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   1, 17, NT_DS+5*OCT, 0
-        SNOTE   0, 17, NT_C+4*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_F+6*OCT,  1
-        SNOTE   2,  9, NT_DS+6*OCT, 1
-        SNOTE   2, 12, NT_F+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  1
-        SNOTE   2, 17, NT_AS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   1,  6, NT_D+5*OCT,  0
-        SNOTE   0,  6, NT_AS+3*OCT, 1
-        SNOTE   1,  6, NT_D+5*OCT,  0
-        SNOTE   0,  6, NT_AS+3*OCT, 1
-        SNOTE   0, 15, NT_AS+3*OCT, 0
-        SNOTE   1, 15, NT_D+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  9, NT_D+7*OCT,  1
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2,  9, NT_AS+6*OCT, 0
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_AS+3*OCT, 1
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_AS+3*OCT, 1
-        SNOTE   0, 12, NT_A+3*OCT,  0
-        SNOTE   1, 12, NT_F+5*OCT,  0
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  1
-        SNOTE   2,  9, NT_F+6*OCT,  0
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_A+3*OCT,  1
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_A+3*OCT,  1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   1, 12, NT_D+5*OCT,  0
-        SNOTE   0, 12, NT_G+3*OCT,  1
-        SNOTE   1,  6, NT_G+5*OCT,  0
-        SNOTE   0,  6, NT_G+3*OCT,  1
-        SNOTE   1,  6, NT_G+5*OCT,  0
-        SNOTE   0,  6, NT_G+3*OCT,  1
-        SNOTE   0, 14, NT_G+3*OCT,  0
-        SNOTE   1, 14, NT_D+5*OCT,  1
-        SNOTE   2, 12, NT_GS+6*OCT, 1
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2, 17, NT_DS+7*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_GS+3*OCT, 0
-        SNOTE   1,  6, NT_C+5*OCT,  1
-        SNOTE   1,  6, NT_C+5*OCT,  0
-        SNOTE   0,  6, NT_GS+3*OCT, 1
-        SNOTE   0, 15, NT_GS+3*OCT, 0
-        SNOTE   1, 15, NT_C+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   2,  9, NT_DS+7*OCT, 1
-        SNOTE   2,  9, NT_CS+7*OCT, 0
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_CS+4*OCT, 1
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_CS+4*OCT, 1
-        SNOTE   2, 12, NT_DS+7*OCT, 0
-        SNOTE   0, 12, NT_CS+4*OCT, 0
-        SNOTE   1, 12, NT_F+5*OCT,  1
-        SNOTE   2,  9, NT_C+7*OCT,  0
-        SNOTE   0,  6, NT_GS+3*OCT, 0
-        SNOTE   1,  6, NT_C+5*OCT,  1
-        SNOTE   1,  6, NT_C+5*OCT,  0
-        SNOTE   0,  6, NT_GS+3*OCT, 1
-        SNOTE   2, 17, NT_GS+6*OCT, 0
-        SNOTE   1, 12, NT_C+5*OCT,  0
-        SNOTE   0, 12, NT_GS+3*OCT, 1
-        SNOTE   0,  6, NT_GS+3*OCT, 0
-        SNOTE   1,  6, NT_C+5*OCT,  1
-        SNOTE   1,  6, NT_C+5*OCT,  0
-        SNOTE   0,  6, NT_GS+3*OCT, 1
-        SNOTE   1, 15, NT_C+5*OCT,  0
-        SNOTE   0, 15, NT_GS+3*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   2,  9, NT_DS+7*OCT, 1
-        SNOTE   2,  9, NT_CS+7*OCT, 0
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_CS+4*OCT, 1
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_CS+4*OCT, 1
-        SNOTE   1, 12, NT_DS+5*OCT, 0
-        SNOTE   0, 12, NT_GS+4*OCT, 0
-        SNOTE   2,  9, NT_DS+7*OCT, 1
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2,  9, NT_GS+6*OCT, 0
-        SNOTE   0,  6, NT_GS+4*OCT, 0
-        SNOTE   1,  6, NT_DS+5*OCT, 1
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   1, 12, NT_F+5*OCT,  0
-        SNOTE   0, 12, NT_CS+4*OCT, 0
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   2,  9, NT_DS+7*OCT, 1
-        SNOTE   2,  9, NT_CS+7*OCT, 0
-        SNOTE   0,  6, NT_CS+4*OCT, 0
-        SNOTE   1,  6, NT_F+5*OCT,  1
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_CS+4*OCT, 1
-        SNOTE   1, 12, NT_DS+5*OCT, 0
-        SNOTE   0, 12, NT_GS+4*OCT, 0
-        SNOTE   2,  9, NT_DS+7*OCT, 1
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2,  9, NT_GS+6*OCT, 1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   0, 12, REST,        1
-        SNOTE   0,  6, NT_G+3*OCT,  0
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   1,  6, NT_G+5*OCT,  0
-        SNOTE   0,  6, NT_G+3*OCT,  1
-        SNOTE   0, 14, NT_G+3*OCT,  0
-        SNOTE   1, 14, NT_G+5*OCT,  1
-        SNOTE   2,  9, NT_D+7*OCT,  1
-        SNOTE   2,  9, NT_B+6*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   0, 12, REST,        1
-        SNOTE   0,  6, NT_G+3*OCT,  0
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   1,  6, NT_G+5*OCT,  0
-        SNOTE   0,  6, NT_G+3*OCT,  1
-        SNOTE   0, 14, NT_G+3*OCT,  0
-        SNOTE   1, 14, NT_G+5*OCT,  1
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   0,  9, REST,        1
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   2,  6, NT_DS+6*OCT, 0
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 0
-        SNOTE   0,  9, NT_C+4*OCT,  1
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   0,  9, REST,        1
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   2,  6, NT_DS+6*OCT, 0
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 0
-        SNOTE   0,  9, NT_C+4*OCT,  1
-        SNOTE   2,  9, NT_C+6*OCT,  1
-        SNOTE   2,  9, NT_F+6*OCT,  0
-        SNOTE   1,  6, NT_C+5*OCT,  0
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  0
-        SNOTE   1,  6, NT_C+5*OCT,  1
-        SNOTE   2,  9, NT_GS+6*OCT, 0
-        SNOTE   0,  9, NT_F+4*OCT,  0
-        SNOTE   1,  9, NT_C+5*OCT,  1
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   0,  9, REST,        1
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   2,  6, NT_DS+6*OCT, 0
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 0
-        SNOTE   0,  9, NT_C+4*OCT,  1
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   0,  9, REST,        1
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   2,  6, NT_DS+6*OCT, 0
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 0
-        SNOTE   0,  9, NT_C+4*OCT,  1
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2,  9, NT_F+7*OCT,  0
-        SNOTE   1,  6, NT_C+5*OCT,  0
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  0
-        SNOTE   1,  6, NT_C+5*OCT,  1
-        SNOTE   0,  9, NT_F+4*OCT,  0
-        SNOTE   2,  9, NT_GS+7*OCT, 0
-        SNOTE   1,  9, NT_C+5*OCT,  1
-tuneA13_v0:
-        SCALL   setupA
-        SNOTE   0,  6, NT_G+3*OCT,  1
-        SNOTE   0,  6, NT_F+3*OCT,  1
-        SNOTE   0,  6, NT_G+3*OCT,  1
-        SNOTE   0,  6, NT_F+3*OCT,  1
-        SNOTE   0,  6, NT_G+3*OCT,  1
-        SNOTE   0,  6, NT_F+3*OCT,  1
-        SNOTE   0,  6, NT_GS+3*OCT, 1
-        SNOTE   0,  6, NT_AS+3*OCT, 1
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   0,  6, NT_D+4*OCT,  1
-        SNOTE   0,  6, NT_DS+4*OCT, 1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   0,  6, NT_D+5*OCT,  1
-        SNOTE   0,  6, NT_DS+5*OCT, 1
-        SNOTE   0,  6, NT_F+5*OCT,  1
-        SNOTE   2, 17, NT_D+6*OCT,  0
-        SNOTE   1, 17, NT_C+6*OCT,  0
-        SNOTE   0,  6, NT_G+3*OCT,  1
-        SNOTE   0,  6, NT_F+3*OCT,  1
-        SNOTE   0,  6, NT_G+3*OCT,  1
-        SNOTE   0,  6, NT_F+3*OCT,  1
-        SNOTE   0,  6, NT_G+3*OCT,  1
-        SNOTE   0,  6, NT_F+3*OCT,  1
-        SNOTE   0,  6, NT_GS+3*OCT, 1
-        SNOTE   0,  6, NT_AS+3*OCT, 1
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   0,  6, NT_D+4*OCT,  1
-        SNOTE   0,  6, NT_DS+4*OCT, 1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   2, 17, NT_D+6*OCT,  0
-        SNOTE   1, 17, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   0,  6, NT_D+5*OCT,  1
-        SNOTE   0,  6, NT_DS+5*OCT, 1
-        SNOTE   0,  6, NT_F+5*OCT,  1
-        SNOTE   2, 11, NT_D+6*OCT,  0
-        SNOTE   1, 11, NT_C+6*OCT,  0
-        SNOTE   0,  6, NT_G+3*OCT,  1
-        SNOTE   0,  6, NT_F+3*OCT,  1
-        SNOTE   0,  6, NT_G+3*OCT,  1
-        SNOTE   0,  6, NT_F+3*OCT,  0
-        SNOTE   2,  6, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_C+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   0,  6, NT_G+3*OCT,  1
-        SNOTE   0,  6, NT_F+3*OCT,  1
-        SNOTE   2, 11, NT_D+6*OCT,  0
-        SNOTE   1, 11, NT_C+6*OCT,  0
-        SNOTE   0,  6, NT_GS+3*OCT, 1
-        SNOTE   0,  6, NT_AS+3*OCT, 1
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   0,  6, NT_D+4*OCT,  0
-        SNOTE   2,  6, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_C+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   0,  6, NT_DS+4*OCT, 1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   2, 11, NT_D+6*OCT,  0
-        SNOTE   1, 11, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  0
-        SNOTE   2,  6, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   2, 11, NT_D+6*OCT,  0
-        SNOTE   1, 11, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   0,  6, NT_D+5*OCT,  0
-        SNOTE   2,  6, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_DS+5*OCT, 1
-        SNOTE   0,  6, NT_F+5*OCT,  1
-        SNOTE   2, 11, NT_D+6*OCT,  0
-        SNOTE   1, 11, NT_C+6*OCT,  0
-        SNOTE   0,  6, NT_G+3*OCT,  1
-        SNOTE   0,  6, NT_F+3*OCT,  1
-        SNOTE   0,  6, NT_G+3*OCT,  1
-        SNOTE   0,  6, NT_F+3*OCT,  0
-        SNOTE   2,  6, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_C+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   0,  6, NT_G+3*OCT,  1
-        SNOTE   0,  6, NT_F+3*OCT,  1
-        SNOTE   2, 11, NT_D+6*OCT,  0
-        SNOTE   1, 11, NT_C+6*OCT,  0
-        SNOTE   0,  6, NT_GS+3*OCT, 1
-        SNOTE   0,  6, NT_AS+3*OCT, 1
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   0,  6, NT_D+4*OCT,  0
-        SNOTE   2,  6, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_C+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   0,  6, NT_DS+4*OCT, 1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   2, 11, NT_D+6*OCT,  0
-        SNOTE   1, 11, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  0
-        SNOTE   2,  6, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   2, 11, NT_D+6*OCT,  0
-        SNOTE   1, 11, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   0,  6, NT_D+5*OCT,  0
-        SNOTE   2,  6, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_DS+5*OCT, 1
-        SNOTE   0,  6, NT_F+5*OCT,  1
-tuneA14_v0:
-        SCALL   setupA
-        SNOTE   2, 12, NT_C+6*OCT,  0
-        SNOTE   0, 11, NT_C+3*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   0,  9, NT_C+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_DS+6*OCT, 1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   0, 11, NT_C+3*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   0,  9, NT_C+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0, 11, NT_C+3*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   0,  9, NT_C+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0, 11, NT_C+3*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   2,  9, NT_F+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   0,  9, NT_C+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_DS+6*OCT, 1
-        SNOTE   2, 12, NT_F+6*OCT,  0
-        SNOTE   0, 11, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_D+5*OCT,  1
-        SNOTE   1,  9, NT_F+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  9, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_AS+5*OCT, 0
-        SNOTE   2,  9, NT_D+6*OCT,  1
-        SNOTE   2, 17, NT_AS+6*OCT, 0
-        SNOTE   0, 11, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_D+5*OCT,  1
-        SNOTE   1,  9, NT_F+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  9, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_AS+5*OCT, 1
-        SNOTE   0, 11, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_D+5*OCT,  1
-        SNOTE   1,  9, NT_F+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  9, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_AS+5*OCT, 1
-        SNOTE   0, 11, NT_AS+3*OCT, 0
-        SNOTE   2,  9, NT_D+7*OCT,  0
-        SNOTE   1,  9, NT_D+5*OCT,  1
-        SNOTE   1,  9, NT_F+5*OCT,  0
-        SNOTE   2,  9, NT_C+7*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  9, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_AS+5*OCT, 0
-        SNOTE   2,  9, NT_AS+6*OCT, 1
-        SNOTE   0, 11, NT_A+3*OCT,  0
-        SNOTE   2,  9, NT_C+7*OCT,  0
-        SNOTE   1,  9, NT_A+5*OCT,  1
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_A+4*OCT,  1
-        SNOTE   0,  9, NT_A+3*OCT,  0
-        SNOTE   1,  9, NT_A+5*OCT,  0
-        SNOTE   2,  9, NT_F+6*OCT,  1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   0, 11, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  9, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0, 11, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  9, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   0, 11, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_D+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  9, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   0, 11, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_D+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  9, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   2, 12, NT_GS+6*OCT, 0
-        SNOTE   0, 11, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  9, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2, 17, NT_DS+7*OCT, 0
-        SNOTE   0, 11, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  9, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0, 11, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  9, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0,  9, NT_CS+3*OCT, 0
-        SNOTE   1,  9, NT_F+5*OCT,  0
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   0,  9, NT_F+3*OCT,  0
-        SNOTE   1,  9, NT_GS+5*OCT, 0
-        SNOTE   2,  9, NT_DS+7*OCT, 1
-        SNOTE   0,  9, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   2,  9, NT_CS+7*OCT, 1
-        SNOTE   2, 12, NT_DS+7*OCT, 0
-        SNOTE   0, 11, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  9, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2, 17, NT_GS+6*OCT, 0
-        SNOTE   0, 11, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  9, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0, 11, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  9, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0,  9, NT_CS+3*OCT, 0
-        SNOTE   1,  9, NT_F+5*OCT,  0
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   0,  9, NT_F+3*OCT,  0
-        SNOTE   1,  9, NT_GS+5*OCT, 0
-        SNOTE   2,  9, NT_DS+7*OCT, 1
-        SNOTE   0,  9, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   2,  9, NT_CS+7*OCT, 1
-        SNOTE   0, 11, NT_GS+3*OCT, 0
-        SNOTE   2,  9, NT_DS+7*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   2,  9, NT_C+7*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  9, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_GS+6*OCT, 1
-        SNOTE   0,  9, NT_CS+3*OCT, 0
-        SNOTE   1,  9, NT_F+5*OCT,  0
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   0,  9, NT_F+3*OCT,  0
-        SNOTE   1,  9, NT_GS+5*OCT, 0
-        SNOTE   2,  9, NT_DS+7*OCT, 1
-        SNOTE   0,  9, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   2,  9, NT_CS+7*OCT, 1
-        SNOTE   0, 11, NT_G+3*OCT,  0
-        SNOTE   2,  9, NT_DS+7*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   2,  9, NT_C+7*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  9, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_GS+6*OCT, 1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   0, 11, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  9, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0, 11, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  9, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0, 11, NT_G+3*OCT,  0
-        SNOTE   2,  9, NT_D+7*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_D+6*OCT,  0
-        SNOTE   2,  9, NT_B+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  9, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   0, 11, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_D+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  9, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   0, 11, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_D+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  9, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-tuneA15_v0:
-        SCALL   setupA
-        SNOTE   0, 11, NT_C+3*OCT,  0
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+4*OCT,  0
-        SNOTE   2,  6, NT_DS+6*OCT, 1
-        SNOTE   0,  9, NT_C+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   0, 11, NT_C+3*OCT,  0
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+4*OCT,  0
-        SNOTE   2,  6, NT_DS+6*OCT, 1
-        SNOTE   0,  9, NT_C+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   0,  9, NT_F+3*OCT,  0
-        SNOTE   1,  9, NT_GS+5*OCT, 0
-        SNOTE   2,  9, NT_C+6*OCT,  1
-        SNOTE   0,  9, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_F+6*OCT,  1
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_F+6*OCT,  0
-        SNOTE   2,  9, NT_GS+6*OCT, 1
-        SNOTE   0, 11, NT_C+3*OCT,  0
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+4*OCT,  0
-        SNOTE   2,  6, NT_DS+6*OCT, 1
-        SNOTE   0,  9, NT_C+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   0, 11, NT_C+3*OCT,  0
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+4*OCT,  0
-        SNOTE   2,  6, NT_DS+6*OCT, 1
-        SNOTE   0,  9, NT_C+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   0,  9, NT_F+3*OCT,  0
-        SNOTE   1,  9, NT_GS+5*OCT, 0
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   0,  9, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_F+6*OCT,  0
-        SNOTE   2,  9, NT_GS+7*OCT, 1
-        SNOTE   0, 11, NT_C+3*OCT,  0
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+4*OCT,  0
-        SNOTE   2,  6, NT_DS+6*OCT, 1
-        SNOTE   0,  9, NT_C+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   0, 11, NT_C+3*OCT,  0
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+4*OCT,  0
-        SNOTE   2,  6, NT_DS+6*OCT, 1
-        SNOTE   0,  9, NT_C+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   0,  9, NT_F+3*OCT,  0
-        SNOTE   1,  9, NT_A+5*OCT,  0
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   0,  9, NT_A+3*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_F+6*OCT,  0
-        SNOTE   2,  9, NT_GS+7*OCT, 1
-        SNOTE   1, 17, NT_C+6*OCT,  0
-        SNOTE   2, 17, NT_GS+7*OCT, 0
-        SNOTE   0, 12, NT_GS+3*OCT, 1
-        SNOTE   0,  9, NT_GS+3*OCT, 1
-        SNOTE   0, 12, NT_GS+3*OCT, 1
-        SNOTE   0,  9, NT_GS+3*OCT, 1
-        SNOTE   0, 12, NT_GS+3*OCT, 1
-tuneA16_v0:
-        SCALL   setupA
-        SNOTE   0,  9, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_DS+6*OCT, 1
-        SNOTE   0, 12, NT_GS+3*OCT, 0
-        SNOTE   2, 11, NT_E+6*OCT,  0
-        SNOTE   1, 11, NT_CS+6*OCT, 1
-        SNOTE   2,  6, NT_FS+6*OCT, 1
-        SNOTE   0,  9, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   2,  9, NT_GS+6*OCT, 1
-        SNOTE   1, 15, NT_C+6*OCT,  0
-        SNOTE   2, 15, NT_DS+6*OCT, 0
-        SNOTE   0, 12, NT_GS+3*OCT, 1
-        SNOTE   0,  9, NT_GS+3*OCT, 1
-        SNOTE   0, 12, NT_GS+3*OCT, 1
-        SNOTE   0,  9, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_DS+6*OCT, 1
-        SNOTE   0, 12, NT_GS+3*OCT, 0
-        SNOTE   2, 11, NT_E+6*OCT,  0
-        SNOTE   1, 11, NT_CS+6*OCT, 1
-        SNOTE   2,  6, NT_FS+6*OCT, 1
-        SNOTE   0,  9, NT_GS+3*OCT, 0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   2,  9, NT_GS+6*OCT, 1
-        SNOTE   1, 14, NT_DS+6*OCT, 0
-        SNOTE   0, 11, NT_B+3*OCT,  0
-        SNOTE   2,  9, NT_FS+6*OCT, 1
-        SNOTE   2,  9, NT_B+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_CS+4*OCT, 1
-        SNOTE   2,  9, NT_B+6*OCT,  0
-        SNOTE   0,  9, NT_DS+4*OCT, 1
-        SNOTE   0, 14, NT_E+4*OCT,  0
-        SNOTE   1, 14, NT_B+5*OCT,  0
-        SNOTE   2, 11, NT_GS+6*OCT, 1
-        SNOTE   2,  6, NT_FS+6*OCT, 1
-        SNOTE   2,  9, NT_E+6*OCT,  1
-        SNOTE   0, 14, NT_C+4*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_E+6*OCT,  1
-        SNOTE   1,  9, NT_D+6*OCT,  0
-        SNOTE   2,  9, NT_FS+6*OCT, 1
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_E+6*OCT,  1
-        SNOTE   0, 14, NT_B+3*OCT,  0
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   2,  9, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_D+5*OCT,  0
-        SNOTE   2,  9, NT_G+5*OCT,  1
-        SNOTE   1, 15, NT_CS+6*OCT, 0
-        SNOTE   2, 15, NT_E+6*OCT,  0
-        SNOTE   0, 12, NT_A+3*OCT,  1
-        SNOTE   0,  9, NT_A+3*OCT,  1
-        SNOTE   0, 12, NT_A+3*OCT,  1
-        SNOTE   0,  9, NT_A+3*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   2,  9, NT_E+6*OCT,  1
-        SNOTE   0, 12, NT_A+3*OCT,  0
-        SNOTE   2, 11, NT_F+6*OCT,  0
-        SNOTE   1, 11, NT_D+6*OCT,  1
-        SNOTE   2,  6, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   0,  9, NT_A+3*OCT,  1
-        SNOTE   1, 15, NT_CS+6*OCT, 0
-        SNOTE   2, 15, NT_E+6*OCT,  0
-        SNOTE   0, 12, NT_A+3*OCT,  1
-        SNOTE   0,  9, NT_A+3*OCT,  1
-        SNOTE   0, 12, NT_A+3*OCT,  1
-        SNOTE   0,  9, NT_A+3*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   2,  9, NT_E+6*OCT,  1
-        SNOTE   1, 11, NT_D+6*OCT,  0
-        SNOTE   2, 11, NT_F+6*OCT,  0
-        SNOTE   0,  9, NT_D+4*OCT,  1
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   0,  9, NT_AS+3*OCT, 1
-        SNOTE   2, 15, NT_E+6*OCT,  0
-        SNOTE   1, 15, NT_CS+6*OCT, 0
-        SNOTE   0, 12, NT_A+3*OCT,  1
-        SNOTE   0,  9, NT_A+3*OCT,  1
-        SNOTE   0, 12, NT_A+3*OCT,  1
-        SNOTE   0,  9, NT_A+3*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   2,  9, NT_E+6*OCT,  1
-        SNOTE   0, 14, NT_G+3*OCT,  0
-        SNOTE   1, 11, NT_D+6*OCT,  0
-        SNOTE   2,  9, NT_FS+6*OCT, 1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_A+5*OCT,  0
-        SNOTE   2,  9, NT_FS+6*OCT, 1
-        SNOTE   1, 14, NT_CS+6*OCT, 0
-        SNOTE   2, 14, NT_E+6*OCT,  0
-        SNOTE   0, 12, NT_A+3*OCT,  1
-        SNOTE   0,  9, NT_A+3*OCT,  1
-        SNOTE   1, 11, NT_D+6*OCT,  0
-        SNOTE   0,  9, NT_G+3*OCT,  0
-        SNOTE   2,  9, NT_FS+6*OCT, 1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   0,  9, NT_D+4*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_A+5*OCT,  0
-        SNOTE   2,  9, NT_FS+6*OCT, 0
-        SNOTE   0,  9, NT_G+4*OCT,  1
-        SNOTE   2, 17, NT_E+6*OCT,  0
-        SNOTE   1, 12, NT_B+5*OCT,  0
-        SNOTE   0,  9, NT_B+3*OCT,  1
-        SNOTE   0,  9, NT_FS+4*OCT, 1
-        SNOTE   0,  9, NT_B+4*OCT,  1
-        SNOTE   1, 12, NT_A+5*OCT,  0
-        SNOTE   0,  9, NT_B+3*OCT,  1
-        SNOTE   0,  9, NT_FS+4*OCT, 1
-        SNOTE   0,  9, NT_B+4*OCT,  1
-        SNOTE   2, 17, NT_DS+6*OCT, 0
-        SNOTE   1, 12, NT_G+5*OCT,  0
-        SNOTE   0,  9, NT_B+3*OCT,  1
-        SNOTE   0,  9, NT_FS+4*OCT, 1
-        SNOTE   0,  9, NT_B+4*OCT,  1
-        SNOTE   1, 12, NT_FS+5*OCT, 0
-        SNOTE   0,  9, NT_B+3*OCT,  1
-        SNOTE   0,  9, NT_FS+4*OCT, 1
-        SNOTE   0,  9, NT_B+4*OCT,  1
-tuneA17_v0:
-        SCALL   setupA
-        SNOTE   2, 11, NT_B+5*OCT,  0
-        SNOTE   0, 11, NT_E+3*OCT,  0
-        SNOTE   1, 11, NT_G+5*OCT,  0
-        SNOTE   0,  9, REST,        1
-        SNOTE   0,  9, NT_B+3*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_E+6*OCT,  0
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   0,  9, NT_E+4*OCT,  0
-        SNOTE   1,  9, NT_E+6*OCT,  1
-        SNOTE   2,  9, NT_FS+6*OCT, 0
-        SNOTE   0,  9, NT_FS+3*OCT, 0
-        SNOTE   1,  9, NT_DS+6*OCT, 1
-        SNOTE   2,  9, NT_E+6*OCT,  0
-        SNOTE   0,  9, NT_B+3*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 1
-        SNOTE   2,  9, NT_FS+6*OCT, 0
-        SNOTE   0,  9, NT_FS+4*OCT, 0
-        SNOTE   1,  9, NT_DS+6*OCT, 1
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   1, 11, NT_D+6*OCT,  0
-        SNOTE   0,  9, NT_G+3*OCT,  0
-        SNOTE   0,  9, REST,        1
-        SNOTE   0,  9, NT_D+4*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_FS+6*OCT, 0
-        SNOTE   1,  6, NT_D+6*OCT,  1
-        SNOTE   2,  9, NT_E+6*OCT,  0
-        SNOTE   0,  9, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_D+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   0,  9, NT_A+3*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   2,  9, NT_C+6*OCT,  0
-        SNOTE   0,  9, NT_E+4*OCT,  0
-        SNOTE   1,  9, NT_A+5*OCT,  1
-        SNOTE   2,  9, NT_A+5*OCT,  0
-        SNOTE   0,  9, NT_A+4*OCT,  0
-        SNOTE   1,  9, NT_FS+5*OCT, 1
-        SNOTE   2, 11, NT_B+5*OCT,  0
-        SNOTE   1, 11, NT_G+5*OCT,  0
-        SNOTE   0,  9, NT_B+3*OCT,  0
-        SNOTE   0,  9, REST,        1
-        SNOTE   0,  9, NT_B+4*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_E+6*OCT,  0
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   0,  9, NT_B+3*OCT,  0
-        SNOTE   1,  9, NT_E+6*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_FS+6*OCT, 1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   0,  9, NT_C+5*OCT,  0
-        SNOTE   1,  9, NT_E+6*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_FS+6*OCT, 1
-        SNOTE   2, 17, NT_B+6*OCT,  0
-        SNOTE   1, 14, NT_E+6*OCT,  0
-        SNOTE   0, 11, NT_B+3*OCT,  1
-        SNOTE   0,  6, NT_B+4*OCT,  1
-        SNOTE   0,  9, NT_B+3*OCT,  1
-        SNOTE   1, 14, NT_DS+6*OCT, 0
-        SNOTE   0, 11, NT_B+3*OCT,  1
-        SNOTE   0,  6, NT_B+4*OCT,  1
-        SNOTE   0,  9, NT_B+3*OCT,  1
-        SNOTE   0, 12, NT_C+4*OCT,  0
-        SNOTE   1, 12, NT_E+6*OCT,  0
-        SNOTE   2, 11, NT_B+6*OCT,  1
-        SNOTE   2,  6, NT_B+6*OCT,  1
-        SNOTE   2,  9, NT_B+6*OCT,  1
-        SNOTE   0, 12, NT_G+3*OCT,  0
-        SNOTE   1, 12, NT_D+6*OCT,  0
-        SNOTE   2,  9, NT_B+6*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  1
-        SNOTE   0, 12, NT_C+4*OCT,  0
-        SNOTE   1, 12, NT_E+6*OCT,  0
-        SNOTE   2, 11, NT_B+6*OCT,  1
-        SNOTE   2,  6, NT_B+6*OCT,  1
-        SNOTE   2,  9, NT_B+6*OCT,  1
-        SNOTE   0, 12, NT_G+3*OCT,  0
-        SNOTE   1, 12, NT_D+6*OCT,  0
-        SNOTE   2,  9, NT_B+6*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  1
-        SNOTE   0, 12, NT_C+4*OCT,  0
-        SNOTE   1, 12, NT_E+6*OCT,  0
-        SNOTE   2, 11, NT_B+6*OCT,  1
-        SNOTE   2,  6, NT_A+6*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   0, 12, NT_C+4*OCT,  0
-        SNOTE   1, 12, NT_E+6*OCT,  0
-        SNOTE   2,  9, NT_A+6*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_E+6*OCT,  1
-        SNOTE   0, 17, NT_B+3*OCT,  0
-        SNOTE   2, 17, NT_FS+6*OCT, 0
-        SNOTE   1,  6, NT_DS+6*OCT, 1
-        SNOTE   1,  6, NT_DS+4*OCT, 1
-        SNOTE   1,  6, NT_FS+4*OCT, 1
-        SNOTE   1,  6, NT_A+4*OCT,  1
-        SNOTE   1,  6, NT_B+4*OCT,  1
-        SNOTE   1,  6, NT_DS+5*OCT, 1
-        SNOTE   1,  6, NT_FS+5*OCT, 1
-        SNOTE   1,  6, NT_A+5*OCT,  1
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   1,  6, NT_DS+6*OCT, 1
-        SNOTE   1,  6, NT_FS+6*OCT, 1
-        SNOTE   1,  6, NT_A+6*OCT,  1
-tuneA18_v0:
-        SCALL   setupA
-        SNOTE   2, 14, NT_B+6*OCT,  0
-        SNOTE   1, 14, NT_G+6*OCT,  0
-        SNOTE   0, 11, NT_B+4*OCT,  1
-        SNOTE   0,  6, NT_E+5*OCT,  1
-        SNOTE   0,  9, NT_G+5*OCT,  1
-        SNOTE   2, 14, NT_B+6*OCT,  0
-        SNOTE   1, 14, NT_A+6*OCT,  0
-        SNOTE   0,  9, NT_FS+5*OCT, 1
-        SNOTE   0,  9, NT_E+5*OCT,  1
-        SNOTE   0,  9, NT_FS+5*OCT, 1
-        SNOTE   2, 14, NT_B+6*OCT,  0
-        SNOTE   1, 14, NT_G+6*OCT,  0
-        SNOTE   0, 11, NT_G+5*OCT,  1
-        SNOTE   0,  6, NT_B+4*OCT,  1
-        SNOTE   0,  9, NT_E+5*OCT,  1
-        SNOTE   2, 14, NT_C+7*OCT,  0
-        SNOTE   1, 14, NT_A+6*OCT,  0
-        SNOTE   0,  9, NT_D+5*OCT,  1
-        SNOTE   0,  9, NT_C+5*OCT,  1
-        SNOTE   0,  9, NT_A+4*OCT,  1
-        SNOTE   2, 14, NT_B+6*OCT,  0
-        SNOTE   1, 14, NT_G+6*OCT,  0
-        SNOTE   0, 11, NT_B+4*OCT,  1
-        SNOTE   0,  6, NT_E+5*OCT,  1
-        SNOTE   0,  9, NT_G+5*OCT,  1
-        SNOTE   2, 14, NT_C+7*OCT,  0
-        SNOTE   1, 14, NT_G+6*OCT,  0
-        SNOTE   0,  9, NT_A+5*OCT,  1
-        SNOTE   0,  9, NT_G+5*OCT,  1
-        SNOTE   0,  9, NT_A+5*OCT,  1
-        SNOTE   0, 17, NT_B+5*OCT,  0
-        SNOTE   1, 14, NT_G+6*OCT,  0
-        SNOTE   2, 14, NT_B+6*OCT,  1
-        SNOTE   2, 14, NT_B+6*OCT,  0
-        SNOTE   1, 14, NT_FS+6*OCT, 1
-        SNOTE   0, 12, NT_C+4*OCT,  0
-        SNOTE   2, 11, NT_B+6*OCT,  0
-        SNOTE   1,  6, NT_E+5*OCT,  1
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   1,  6, NT_C+6*OCT,  1
-        SNOTE   1,  6, NT_E+5*OCT,  0
-        SNOTE   2,  6, NT_E+7*OCT,  1
-        SNOTE   2,  9, NT_B+6*OCT,  0
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   1,  6, NT_C+6*OCT,  1
-        SNOTE   0, 12, NT_G+3*OCT,  0
-        SNOTE   2,  9, NT_D+7*OCT,  0
-        SNOTE   1,  6, NT_D+5*OCT,  1
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   2,  9, NT_B+6*OCT,  0
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   1,  6, NT_D+5*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   0, 12, NT_C+4*OCT,  0
-        SNOTE   2, 11, NT_E+6*OCT,  0
-        SNOTE   1,  6, NT_E+5*OCT,  1
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   1,  6, NT_C+6*OCT,  1
-        SNOTE   1,  6, NT_E+5*OCT,  0
-        SNOTE   2,  6, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_C+7*OCT,  0
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   1,  6, NT_C+6*OCT,  1
-        SNOTE   0, 12, NT_G+3*OCT,  0
-        SNOTE   2,  9, NT_B+6*OCT,  0
-        SNOTE   1,  6, NT_D+5*OCT,  1
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   1,  6, NT_D+5*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   1, 12, NT_AS+5*OCT, 0
-        SNOTE   2, 11, NT_A+6*OCT,  1
-        SNOTE   2,  6, NT_D+7*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  1
-        SNOTE   1, 12, NT_F+5*OCT,  0
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  1
-        SNOTE   2,  9, NT_F+6*OCT,  1
-        SNOTE   1, 12, NT_AS+5*OCT, 0
-        SNOTE   2, 11, NT_D+6*OCT,  1
-        SNOTE   2,  6, NT_F+6*OCT,  1
-        SNOTE   2,  9, NT_AS+6*OCT, 1
-        SNOTE   1, 12, NT_F+5*OCT,  0
-        SNOTE   2,  9, NT_A+6*OCT,  1
-        SNOTE   2,  9, NT_F+6*OCT,  1
-        SNOTE   2,  9, NT_C+6*OCT,  1
-tuneA19_v0:
-        SCALL   setupA
-        SNOTE   0, 14, NT_D+4*OCT,  0
-        SNOTE   1, 14, NT_AS+5*OCT, 0
-        SNOTE   2, 11, NT_A+6*OCT,  1
-        SNOTE   2,  6, NT_F+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   1, 12, NT_B+5*OCT,  0
-        SNOTE   0, 12, NT_D+3*OCT,  1
-        SNOTE   0,  9, NT_D+3*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   0, 12, NT_D+3*OCT,  0
-        SNOTE   1, 12, NT_B+5*OCT,  1
-        SNOTE   0,  9, NT_D+3*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   0, 14, NT_D+4*OCT,  0
-        SNOTE   1, 14, NT_AS+5*OCT, 0
-        SNOTE   2, 11, NT_A+6*OCT,  1
-        SNOTE   2,  6, NT_F+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   1, 12, NT_B+5*OCT,  0
-        SNOTE   0, 12, NT_D+3*OCT,  1
-        SNOTE   0,  9, NT_D+3*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   0, 12, NT_D+3*OCT,  0
-        SNOTE   1, 12, NT_B+5*OCT,  1
-        SNOTE   0,  9, NT_D+3*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   2, 11, NT_A+6*OCT,  0
-        SNOTE   1,  9, NT_D+5*OCT,  1
-        SNOTE   0, 12, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_F+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_F+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_AS+5*OCT, 1
-        SNOTE   2, 11, NT_AS+6*OCT, 0
-        SNOTE   1,  9, NT_D+5*OCT,  1
-        SNOTE   0, 12, NT_G+3*OCT,  0
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_AS+5*OCT, 1
-        SNOTE   2, 11, NT_B+6*OCT,  0
-        SNOTE   1,  9, NT_D+5*OCT,  1
-        SNOTE   0, 12, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_F+6*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   2, 11, NT_C+7*OCT,  0
-        SNOTE   1,  9, NT_E+5*OCT,  1
-        SNOTE   0, 12, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_F+6*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   2, 11, NT_CS+7*OCT, 0
-        SNOTE   1,  9, NT_E+5*OCT,  1
-        SNOTE   0, 12, NT_A+3*OCT,  0
-        SNOTE   1,  9, NT_A+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_A+6*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 1
-        SNOTE   2, 11, NT_D+7*OCT,  0
-        SNOTE   1,  9, NT_F+5*OCT,  1
-        SNOTE   0, 12, NT_D+4*OCT,  0
-        SNOTE   1,  9, NT_A+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_A+6*OCT,  1
-        SNOTE   2,  9, NT_F+6*OCT,  0
-        SNOTE   1,  9, NT_D+6*OCT,  1
-        SNOTE   2,  9, NT_E+7*OCT,  0
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_A+6*OCT,  1
-        SNOTE   0, 11, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_G+6*OCT,  0
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   2,  9, NT_G+7*OCT,  0
-        SNOTE   1,  9, NT_D+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   2,  9, NT_GS+7*OCT, 0
-        SNOTE   0,  9, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0, 14, NT_A+3*OCT,  0
-        SNOTE   1, 11, NT_CS+6*OCT, 0
-        SNOTE   2, 11, NT_A+7*OCT,  1
-        SNOTE   2,  6, NT_A+6*OCT,  0
-        SNOTE   1,  6, NT_CS+6*OCT, 1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 1
-        SNOTE   0, 14, NT_AS+3*OCT, 0
-        SNOTE   1, 11, NT_D+6*OCT,  0
-        SNOTE   2, 11, NT_A+7*OCT,  1
-        SNOTE   2,  6, NT_A+6*OCT,  0
-        SNOTE   1,  6, NT_D+6*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   1,  9, NT_D+6*OCT,  1
-        SNOTE   0, 11, NT_A+3*OCT,  0
-        SNOTE   1, 11, NT_CS+6*OCT, 0
-        SNOTE   2, 11, NT_A+7*OCT,  1
-        SNOTE   2,  6, NT_A+6*OCT,  0
-        SNOTE   0,  6, NT_B+3*OCT,  0
-        SNOTE   1,  6, NT_CS+6*OCT, 1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   0,  9, NT_CS+4*OCT, 1
-        SNOTE   2,  9, NT_D+7*OCT,  0
-        SNOTE   1,  9, NT_F+6*OCT,  0
-        SNOTE   0,  9, NT_D+4*OCT,  1
-        SNOTE   0, 11, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_E+6*OCT,  0
-        SNOTE   2,  9, NT_E+7*OCT,  1
-        SNOTE   1,  9, NT_D+6*OCT,  0
-        SNOTE   2,  9, NT_F+7*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  9, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_G+7*OCT,  1
-        SNOTE   0, 14, NT_A+3*OCT,  0
-        SNOTE   1, 11, NT_CS+6*OCT, 0
-        SNOTE   2, 11, NT_A+7*OCT,  1
-        SNOTE   2,  6, NT_A+6*OCT,  0
-        SNOTE   1,  6, NT_CS+6*OCT, 1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 1
-        SNOTE   0, 14, NT_AS+3*OCT, 0
-        SNOTE   1, 11, NT_D+6*OCT,  0
-        SNOTE   2, 11, NT_A+7*OCT,  1
-        SNOTE   2,  6, NT_A+6*OCT,  0
-        SNOTE   1,  6, NT_D+6*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   1,  9, NT_D+6*OCT,  1
-        SNOTE   2, 11, NT_A+7*OCT,  0
-        SNOTE   0, 11, NT_A+3*OCT,  0
-        SNOTE   1, 11, NT_CS+6*OCT, 1
-        SNOTE   2,  6, NT_A+6*OCT,  0
-        SNOTE   0,  6, NT_B+3*OCT,  0
-        SNOTE   1,  6, NT_CS+6*OCT, 1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   0,  9, NT_CS+4*OCT, 1
-        SNOTE   0,  9, NT_D+4*OCT,  0
-        SNOTE   2,  9, NT_D+7*OCT,  0
-        SNOTE   1,  9, NT_F+6*OCT,  1
+tuneA20_v0:
+        SCALL   tuneA20_setup
         SWAIT   0
-; Initialize the speaker voices, transpose down two octaves,
-; and assign envelopes and LFO waveforms.
-setupA:
+tuneA20_setup:
         SCLEAR  1
         SSET    vfTranspose,     0FFE8h
-        SSET    vfEnvBase,       setupA_env_v1
+        SSET    vfEnvBase,       tuneA20_env_v1
         SSET    vfLfoTable,      lfoSine
         SSET    vfLfoWrap,       1000h
         SSET    vfLfoDepth,      28h
@@ -1707,43 +591,62 @@ setupA:
         SCLEAR  2
         SSET    vfTranspose,     0FFE8h
         SSET    vfReleaseLead,   5
-        SSET    vfEnvBase,       setupA_env_v2
+        SSET    vfEnvBase,       tuneA20_env_v2
         SSET    vfLfoTable,      lfoSine
         SSET    vfLfoWrap,       1000h
         SSET    vfLfoDepth,      14h
         SSET    vfLfoRate,       78h
         SCLEAR  0
         SSET    vfTranspose,     0FFE8h
-        SSET    vfEnvBase,       setupA_env_v0
-        SSET    vfLfoTable,      lfoZero
-        SSET    vfLfoWrap,       200h
+        SSET    vfEnvBase,       tuneA20_env_v0
+        SSET    vfLfoTable,      lfoSine
+        SSET    vfLfoWrap,       1000h
         SSET    vfLfoDepth,      78h
-        SSET    vfLfoRate,       80h
-        SSET    vfTempo,         6
+        SSET    vfLfoRate,       0E4h
+        SCLEAR  3
+        SSET    vfTranspose,     0FFE8h
+        SSET    vfEnvBase,       tuneA20_env_v3
+        SSET    vfLfoTable,      lfoSine
+        SSET    vfLfoWrap,       1000h
+        SSET    vfLfoDepth,      78h
+        SSET    vfLfoRate,       0E4h
+        SSET    vfTempo,         1
         SRET
-; setupA's three envelope lists, one per voice: (value, ticks) pairs walked by
-; voice_step, and vfGateLen expiring restarts a voice at the 5th pair.
-setupA_env_v2:
+tuneA20_env_v2:
         SENV    3,               ENV_SETLEVEL
-        SENV    0,               0
-        SENV    0,               0
         SENV    0,               0
         SENV    0,               ENV_SETLEVEL
         SENV    0,               0
-setupA_env_v1:
+        SENV    0,               ENV_SETLEVEL
+        SENV    0,               0
+tuneA20_env_v1:
         SENV    3,               ENV_SETLEVEL
         SENV    0,               16
         SENV    0,               ENV_SETLEVEL
         SENV    0,               0
-        SENV    0,               ENV_SETLEVEL
+        SENV    0,               30
         SENV    0,               0
-setupA_env_v0:
+tuneA20_env_v0:
         SENV    3,               ENV_SETLEVEL
         SENV    0,               8
         SENV    0,               ENV_SETLEVEL
         SENV    0,               0
+        SENV    0,               30
+        SENV    0,               0
+tuneA20_env_v3:
+        SENV    3,               ENV_SETLEVEL
+        SENV    0,               20
         SENV    0,               ENV_SETLEVEL
         SENV    0,               0
+        SENV    0,               30
+        SENV    0,               0
+tuneA19_v0:
+        SSET    vfLevel,         3
+        SSET    vfPeriod,        0FA0h
+        SSET    vfPeriodAdd,     14h
+        SWAIT   16
+        SSET    vfLevel,         0
+        SWAIT   0
 tuneB10_v2:
         SSET    vfPeriod,        0BB8h
         SWAIT   28
@@ -1758,6 +661,121 @@ tuneB10_v3:
         SSET    vfLevel,         0C350h
         SSET    vfLevelAdd,      0FF9Ch
         SWAIT   400
+        SSET    vfLevel,         0
+        SWAIT   0
+tuneB12_v2:
+        SSET    vfPeriod,        0BB8h
+        SWAIT   18
+        SSET    vfPeriod,        3E80h
+        SSET    vfPeriodAdd,     0FFE7h
+        SWAIT   100
+        SWAIT   0
+tuneB12_v3:
+        SSET    vfPeriod,        1C0h
+        SSET    vfLevel,         0EA60h
+        SWAIT   18
+        SSET    vfLevel,         0C350h
+        SSET    vfLevelAdd,      0FF9Ch
+        SWAIT   100
+        SSET    vfLevel,         0
+        SWAIT   0
+tuneB13_v2:
+        SSET    vfPeriod,        2328h
+        SSET    vfPeriodAdd,     0FFE7h
+        SWAIT   25
+        SWAIT   0
+tuneB13_v3:
+        SSET    vfPeriod,        1C0h
+        SSET    vfLevel,         0D6D8h
+        SSET    vfLevelAdd,      0FF9Ch
+        SWAIT   25
+        SSET    vfLevel,         0
+        SWAIT   0
+tuneB13_v0:
+        SSET    vfPeriod,        0FA0h
+        SSET    vfLevel,         9C40h
+        SSET    vfLevelAdd,      0FF9Ch
+        SSET    vfPeriodAdd,     0FF9Ch
+        SWAIT   25
+        SSET    vfLevel,         0
+        SWAIT   0
+tuneB18_v2:
+        SSET    vfPeriod,        2710h
+        SSET    vfPeriodAdd,     0FFE7h
+        SWAIT   55
+        SWAIT   0
+tuneB18_v3:
+        SSET    vfPeriod,        1C0h
+        SSET    vfLevel,         0EA60h
+        SSET    vfLevelAdd,      0FF9Ch
+        SWAIT   55
+        SSET    vfLevel,         0
+        SWAIT   0
+tuneB18_v0:
+        SSET    vfPeriod,        1B58h
+        SRET
+; Stream-formatted tail after the return; no song-table entry points here.
+tuneB18_v0_tail:
+        SNOTE   0, 10, NT_E+3*OCT, 0, 160
+        SSET    vfLevelAdd,      0FF9Ch
+        SSET    vfPeriodAdd,     0FF9Ch
+        SWAIT   55
+        SSET    vfLevel,         0
+        SWAIT   0
+tuneB16_v2:
+        SSET    vfPeriod,        1F40h
+        SWAIT   40
+        SWAIT   0
+tuneB16_v3:
+        SSET    vfPeriod,        1C0h
+        SSET    vfLoopCounterA,  4
+tuneB16_v3_loop:
+        SSET    vfLevel,         0D6D8h
+        SWAIT   5
+        SSET    vfLevel,         1
+        SWAIT   5
+        SLOOP   vfLoopCounterA, tuneB16_v3_loop
+        SSET    vfLevel,         0
+        SWAIT   0
+tuneB17_v2:
+        SSET    vfLoopCounterA,  20
+tuneB17_v2_loop:
+        SSET    vfPeriod,        1770h
+        SSET    vfLevel,         0C350h
+        SWAIT   1
+        SSET    vfPeriod,        1388h
+        SSET    vfLevel,         1
+        SWAIT   1
+        SSET    vfPeriod,        7530h
+        SSET    vfLevel,         0C350h
+        SWAIT   1
+        SLOOP   vfLoopCounterA, tuneB17_v2_loop
+        SSET    vfLevel,         0
+        SWAIT   0
+tuneB14_v2:
+        SSET    vfPeriod,        0FA0h
+        SWAIT   28
+        SWAIT   0
+tuneB14_v3:
+        SSET    vfPeriod,        1C0h
+        SSET    vfLevel,         0C350h
+        SWAIT   28
+        SSET    vfLevel,         0
+        SWAIT   0
+tuneB15_v2:
+        SSET    vfPeriod,        2710h
+        SWAIT   5
+        SSET    vfPeriod,        0FA0h
+        SSET    vfPeriodAdd,     64h
+        SWAIT   100
+        SWAIT   0
+tuneB15_v3:
+        SSET    vfPeriod,        1C0h
+        SSET    vfLevel,         0EA60h
+        SWAIT   5
+        SSET    vfLevel,         0C350h
+        SSET    vfLevelAdd,      0FF9Ch
+        SWAIT   100
         SSET    vfLevel,         0
         SWAIT   0
 tuneB08_v3:
@@ -1788,7 +806,7 @@ tuneB07_v0_loop:
         SWAIT   12
         SSET    vfPeriodAdd,     276h
         SWAIT   8
-        SLOOP   vfLoopCounterA,  tuneB07_v0_loop
+        SLOOP   vfLoopCounterA, tuneB07_v0_loop
         SSET    vfLevel,         0
         SWAIT   0
 tuneB06_v2:
@@ -1812,7 +830,7 @@ tuneB05_v0_loop:
         SWAIT   12
         SSET    vfPeriodAdd,     9
         SWAIT   8
-        SLOOP   vfLoopCounterA,  tuneB05_v0_loop
+        SLOOP   vfLoopCounterA, tuneB05_v0_loop
         SSET    vfLevel,         0
         SWAIT   0
 tuneB03_v2:
@@ -1840,7 +858,7 @@ tuneB04_v0_loop:
         SWAIT   2
         SSET    vfPeriodAdd,     4D8h
         SWAIT   2
-        SLOOP   vfLoopCounterA,  tuneB04_v0_loop
+        SLOOP   vfLoopCounterA, tuneB04_v0_loop
         SSET    vfLevelAdd,      0FE61h
         SSET    vfPeriodAdd,     3Ch
         SWAIT   120
@@ -1870,7 +888,6 @@ tuneB02_v3:
         SWAIT   25
         SSET    vfLevel,         0
         SWAIT   0
-; Empty stream: silence the voice and stop.
 silentB:
         SSET    vfLevel,         0
         SWAIT   0
@@ -1884,7 +901,7 @@ tuneB01_v0_loop:
         SWAIT   16
         SSET    vfPeriodAdd,     0FFE2h
         SWAIT   16
-        SLOOP   vfLoopCounterA,  tuneB01_v0_loop
+        SLOOP   vfLoopCounterA, tuneB01_v0_loop
         SSET    vfLevel,         0
         SWAIT   0
 tuneB01_v1:
@@ -1897,7 +914,7 @@ tuneB01_v1_loop:
         SWAIT   8
         SSET    vfPeriodAdd,     0FFBEh
         SWAIT   8
-        SLOOP   vfLoopCounterA,  tuneB01_v1_loop
+        SLOOP   vfLoopCounterA, tuneB01_v1_loop
         SSET    vfLevel,         0
         SWAIT   0
 tuneB01_v2:
@@ -1910,7 +927,7 @@ tuneB01_v2_loop:
         SWAIT   12
         SSET    vfPeriodAdd,     0FFB2h
         SWAIT   12
-        SLOOP   vfLoopCounterA,  tuneB01_v2_loop
+        SLOOP   vfLoopCounterA, tuneB01_v2_loop
         SSET    vfLevel,         0
         SWAIT   0
 tuneB11_v0:
@@ -1934,1222 +951,14 @@ tuneB11_v2:
         SWAIT   10
         SSET    vfLevel,         0
         SWAIT   0
-tuneB12_v0:
-        SCALL   setupB
-        SNOTE   2, 12, NT_C+6*OCT,  1
-        SNOTE   2,  9, NT_DS+6*OCT, 1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   1, 17, NT_DS+5*OCT, 0
-        SNOTE   0, 17, NT_C+4*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_F+6*OCT,  1
-        SNOTE   2,  9, NT_DS+6*OCT, 1
-        SNOTE   2, 12, NT_F+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  1
-        SNOTE   2, 17, NT_AS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   1,  6, NT_D+5*OCT,  0
-        SNOTE   0,  6, NT_AS+3*OCT, 1
-        SNOTE   1,  6, NT_D+5*OCT,  0
-        SNOTE   0,  6, NT_AS+3*OCT, 1
-        SNOTE   0, 15, NT_AS+3*OCT, 0
-        SNOTE   1, 15, NT_D+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  9, NT_D+7*OCT,  1
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2,  9, NT_AS+6*OCT, 0
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_AS+3*OCT, 1
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_AS+3*OCT, 1
-        SNOTE   0, 12, NT_A+3*OCT,  0
-        SNOTE   1, 12, NT_F+5*OCT,  0
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  1
-        SNOTE   2,  9, NT_F+6*OCT,  0
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_A+4*OCT,  1
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_A+4*OCT,  1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   1, 12, NT_D+5*OCT,  0
-        SNOTE   0, 12, NT_G+4*OCT,  1
-        SNOTE   1,  6, NT_G+5*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   1,  6, NT_G+5*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0, 14, NT_G+4*OCT,  0
-        SNOTE   1, 14, NT_D+5*OCT,  1
-        SNOTE   2, 12, NT_GS+6*OCT, 1
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2, 17, NT_DS+7*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_GS+4*OCT, 0
-        SNOTE   1,  6, NT_C+5*OCT,  1
-        SNOTE   1,  6, NT_C+5*OCT,  0
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0, 15, NT_GS+4*OCT, 0
-        SNOTE   1, 15, NT_C+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   2,  9, NT_DS+7*OCT, 1
-        SNOTE   2,  9, NT_CS+7*OCT, 0
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_CS+4*OCT, 1
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_CS+4*OCT, 1
-        SNOTE   2, 12, NT_DS+7*OCT, 0
-        SNOTE   0, 12, NT_CS+4*OCT, 0
-        SNOTE   1, 12, NT_F+5*OCT,  1
-        SNOTE   2,  9, NT_C+7*OCT,  0
-        SNOTE   0,  6, NT_GS+4*OCT, 0
-        SNOTE   1,  6, NT_C+5*OCT,  1
-        SNOTE   1,  6, NT_C+5*OCT,  0
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   2, 17, NT_GS+6*OCT, 0
-        SNOTE   1, 12, NT_C+5*OCT,  0
-        SNOTE   0, 12, NT_GS+4*OCT, 1
-        SNOTE   0,  6, NT_GS+4*OCT, 0
-        SNOTE   1,  6, NT_C+5*OCT,  1
-        SNOTE   1,  6, NT_C+5*OCT,  0
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   1, 15, NT_C+5*OCT,  0
-        SNOTE   0, 15, NT_GS+4*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   2,  9, NT_DS+7*OCT, 1
-        SNOTE   2,  9, NT_CS+7*OCT, 0
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_CS+4*OCT, 1
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_CS+4*OCT, 1
-        SNOTE   1, 12, NT_DS+5*OCT, 0
-        SNOTE   0, 12, NT_GS+4*OCT, 0
-        SNOTE   2,  9, NT_DS+7*OCT, 1
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2,  9, NT_GS+6*OCT, 0
-        SNOTE   0,  6, NT_GS+4*OCT, 0
-        SNOTE   1,  6, NT_DS+5*OCT, 1
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   1, 12, NT_F+5*OCT,  0
-        SNOTE   0, 12, NT_CS+4*OCT, 0
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   2,  9, NT_DS+7*OCT, 1
-        SNOTE   2,  9, NT_CS+7*OCT, 0
-        SNOTE   0,  6, NT_CS+4*OCT, 0
-        SNOTE   1,  6, NT_F+5*OCT,  1
-        SNOTE   1,  6, NT_F+5*OCT,  0
-        SNOTE   0,  6, NT_CS+4*OCT, 1
-        SNOTE   1, 12, NT_DS+5*OCT, 0
-        SNOTE   0, 12, NT_GS+4*OCT, 0
-        SNOTE   2,  9, NT_DS+7*OCT, 1
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2,  9, NT_GS+6*OCT, 1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   0, 12, REST,        1
-        SNOTE   0,  6, NT_G+4*OCT,  0
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   1,  6, NT_G+5*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0, 14, NT_G+4*OCT,  0
-        SNOTE   1, 14, NT_G+5*OCT,  1
-        SNOTE   2,  9, NT_D+7*OCT,  1
-        SNOTE   2,  9, NT_B+6*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   0, 12, REST,        1
-        SNOTE   0,  6, NT_G+4*OCT,  0
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   1,  6, NT_G+5*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0, 14, NT_G+4*OCT,  0
-        SNOTE   1, 14, NT_G+5*OCT,  1
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   0,  9, REST,        1
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   2,  6, NT_DS+6*OCT, 0
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 0
-        SNOTE   0,  9, NT_C+4*OCT,  1
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   0,  9, REST,        1
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   2,  6, NT_DS+6*OCT, 0
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 0
-        SNOTE   0,  9, NT_C+4*OCT,  1
-        SNOTE   2,  9, NT_C+6*OCT,  1
-        SNOTE   2,  9, NT_F+6*OCT,  0
-        SNOTE   1,  6, NT_C+5*OCT,  0
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  0
-        SNOTE   1,  6, NT_C+5*OCT,  1
-        SNOTE   2,  9, NT_GS+6*OCT, 0
-        SNOTE   0,  9, NT_F+4*OCT,  0
-        SNOTE   1,  9, NT_C+5*OCT,  1
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   0,  9, REST,        1
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   2,  6, NT_DS+6*OCT, 0
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 0
-        SNOTE   0,  9, NT_C+4*OCT,  1
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   0,  9, REST,        1
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+4*OCT,  1
-        SNOTE   2,  6, NT_DS+6*OCT, 0
-        SNOTE   1,  6, NT_DS+5*OCT, 0
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 0
-        SNOTE   0,  9, NT_C+4*OCT,  1
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2,  9, NT_F+7*OCT,  0
-        SNOTE   1,  6, NT_C+5*OCT,  0
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  0
-        SNOTE   1,  6, NT_C+5*OCT,  1
-        SNOTE   0,  9, NT_F+4*OCT,  0
-        SNOTE   2,  9, NT_GS+7*OCT, 0
-        SNOTE   1,  9, NT_C+5*OCT,  1
-tuneB13_v0:
-        SCALL   setupB
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   0,  6, NT_D+5*OCT,  1
-        SNOTE   0,  6, NT_DS+5*OCT, 1
-        SNOTE   0,  6, NT_F+5*OCT,  1
-        SNOTE   0,  6, NT_G+5*OCT,  1
-        SNOTE   0,  6, NT_F+5*OCT,  1
-        SNOTE   0,  6, NT_G+5*OCT,  1
-        SNOTE   0,  6, NT_F+5*OCT,  1
-        SNOTE   0,  6, NT_G+5*OCT,  1
-        SNOTE   0,  6, NT_F+5*OCT,  1
-        SNOTE   0,  6, NT_GS+5*OCT, 1
-        SNOTE   0,  6, NT_AS+5*OCT, 1
-        SNOTE   0,  6, NT_C+6*OCT,  1
-        SNOTE   0,  6, NT_D+6*OCT,  1
-        SNOTE   0,  6, NT_DS+6*OCT, 1
-        SNOTE   0,  6, NT_F+6*OCT,  1
-        SNOTE   2, 17, NT_D+6*OCT,  0
-        SNOTE   1, 17, NT_C+6*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   0,  6, NT_D+5*OCT,  1
-        SNOTE   0,  6, NT_DS+5*OCT, 1
-        SNOTE   0,  6, NT_F+5*OCT,  1
-        SNOTE   2, 17, NT_D+6*OCT,  0
-        SNOTE   1, 17, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   0,  6, NT_D+5*OCT,  1
-        SNOTE   0,  6, NT_DS+5*OCT, 1
-        SNOTE   0,  6, NT_F+5*OCT,  1
-        SNOTE   1, 14, NT_C+6*OCT,  0
-        SNOTE   2, 11, NT_D+6*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  0
-        SNOTE   2,  6, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_C+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   1, 14, NT_C+6*OCT,  0
-        SNOTE   2, 11, NT_D+6*OCT,  0
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   0,  6, NT_D+5*OCT,  0
-        SNOTE   2,  6, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_C+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   0,  6, NT_DS+5*OCT, 1
-        SNOTE   0,  6, NT_F+5*OCT,  1
-        SNOTE   2, 11, NT_D+6*OCT,  0
-        SNOTE   1, 11, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  0
-        SNOTE   2,  6, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   2, 11, NT_D+6*OCT,  0
-        SNOTE   1, 11, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   0,  6, NT_D+5*OCT,  0
-        SNOTE   2,  6, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_DS+5*OCT, 1
-        SNOTE   0,  6, NT_F+5*OCT,  1
-        SNOTE   2, 11, NT_D+6*OCT,  0
-        SNOTE   1, 11, NT_C+6*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  0
-        SNOTE   2,  6, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_C+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   2, 11, NT_D+6*OCT,  0
-        SNOTE   1, 11, NT_C+6*OCT,  0
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   0,  6, NT_D+5*OCT,  0
-        SNOTE   2,  6, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_C+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   0,  6, NT_DS+5*OCT, 1
-        SNOTE   0,  6, NT_F+5*OCT,  1
-        SNOTE   2, 11, NT_D+6*OCT,  0
-        SNOTE   1, 11, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  0
-        SNOTE   2,  6, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_G+4*OCT,  1
-        SNOTE   0,  6, NT_F+4*OCT,  1
-        SNOTE   2, 11, NT_D+6*OCT,  0
-        SNOTE   1, 11, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_GS+4*OCT, 1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   0,  6, NT_D+5*OCT,  0
-        SNOTE   2,  6, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  0
-        SNOTE   0,  6, NT_DS+5*OCT, 1
-        SNOTE   0,  6, NT_F+5*OCT,  1
-tuneB14_v0:
-        SCALL   setupB
-        SNOTE   2, 12, NT_C+6*OCT,  0
-        SNOTE   0, 11, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_DS+6*OCT, 1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   0, 11, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0, 11, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0, 11, NT_C+4*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   2,  9, NT_F+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+5*OCT,  1
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_DS+6*OCT, 1
-        SNOTE   2, 12, NT_F+6*OCT,  0
-        SNOTE   0, 11, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_D+5*OCT,  1
-        SNOTE   1,  9, NT_F+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  9, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_AS+5*OCT, 0
-        SNOTE   2,  9, NT_D+6*OCT,  1
-        SNOTE   2, 17, NT_AS+6*OCT, 0
-        SNOTE   0, 11, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_D+5*OCT,  1
-        SNOTE   1,  9, NT_F+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  9, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_AS+5*OCT, 1
-        SNOTE   0, 11, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_D+5*OCT,  1
-        SNOTE   1,  9, NT_F+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  9, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_AS+5*OCT, 1
-        SNOTE   0, 11, NT_AS+3*OCT, 0
-        SNOTE   2,  9, NT_D+7*OCT,  0
-        SNOTE   1,  9, NT_D+5*OCT,  1
-        SNOTE   1,  9, NT_F+5*OCT,  0
-        SNOTE   2,  9, NT_C+7*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  9, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_AS+5*OCT, 0
-        SNOTE   2,  9, NT_AS+6*OCT, 1
-        SNOTE   0, 11, NT_A+3*OCT,  0
-        SNOTE   2,  9, NT_C+7*OCT,  0
-        SNOTE   1,  9, NT_A+5*OCT,  1
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_A+4*OCT,  1
-        SNOTE   0,  9, NT_A+3*OCT,  0
-        SNOTE   1,  9, NT_A+5*OCT,  0
-        SNOTE   2,  9, NT_F+6*OCT,  1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   0, 11, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+5*OCT,  1
-        SNOTE   0,  9, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0, 11, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+5*OCT,  1
-        SNOTE   0,  9, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   0, 11, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_D+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+5*OCT,  1
-        SNOTE   0,  9, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   0, 11, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_D+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+5*OCT,  1
-        SNOTE   0,  9, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   2, 12, NT_GS+6*OCT, 0
-        SNOTE   0, 11, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_GS+5*OCT, 1
-        SNOTE   0,  9, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2, 17, NT_DS+7*OCT, 0
-        SNOTE   0, 11, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_GS+5*OCT, 1
-        SNOTE   0,  9, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0, 11, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_GS+5*OCT, 1
-        SNOTE   0,  9, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0,  9, NT_CS+4*OCT, 0
-        SNOTE   1,  9, NT_F+5*OCT,  0
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   0,  9, NT_F+4*OCT,  0
-        SNOTE   1,  9, NT_GS+5*OCT, 0
-        SNOTE   2,  9, NT_DS+7*OCT, 1
-        SNOTE   0,  9, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   2,  9, NT_CS+7*OCT, 1
-        SNOTE   2, 12, NT_DS+7*OCT, 0
-        SNOTE   0, 11, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_GS+5*OCT, 1
-        SNOTE   0,  9, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2, 17, NT_GS+6*OCT, 0
-        SNOTE   0, 11, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_GS+5*OCT, 1
-        SNOTE   0,  9, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0, 11, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_GS+5*OCT, 1
-        SNOTE   0,  9, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0,  9, NT_CS+4*OCT, 0
-        SNOTE   1,  9, NT_F+5*OCT,  0
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   0,  9, NT_F+4*OCT,  0
-        SNOTE   1,  9, NT_GS+5*OCT, 0
-        SNOTE   2,  9, NT_DS+7*OCT, 1
-        SNOTE   0,  9, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   2,  9, NT_CS+7*OCT, 1
-        SNOTE   0, 11, NT_GS+4*OCT, 0
-        SNOTE   2,  9, NT_DS+7*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   2,  9, NT_C+7*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_GS+5*OCT, 1
-        SNOTE   0,  9, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_GS+6*OCT, 1
-        SNOTE   0,  9, NT_CS+4*OCT, 0
-        SNOTE   1,  9, NT_F+5*OCT,  0
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   0,  9, NT_F+4*OCT,  0
-        SNOTE   1,  9, NT_GS+5*OCT, 0
-        SNOTE   2,  9, NT_DS+7*OCT, 1
-        SNOTE   0,  9, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   2,  9, NT_CS+7*OCT, 1
-        SNOTE   0, 11, NT_G+4*OCT,  0
-        SNOTE   2,  9, NT_DS+7*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   2,  9, NT_C+7*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+5*OCT,  1
-        SNOTE   0,  9, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_GS+6*OCT, 1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   0, 11, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+5*OCT,  1
-        SNOTE   0,  9, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0, 11, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   1,  9, NT_DS+6*OCT, 0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+5*OCT,  1
-        SNOTE   0,  9, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0, 11, NT_G+4*OCT,  0
-        SNOTE   2,  9, NT_D+7*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_D+6*OCT,  0
-        SNOTE   2,  9, NT_B+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+5*OCT,  1
-        SNOTE   0,  9, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   0, 11, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_D+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+5*OCT,  1
-        SNOTE   0,  9, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   0, 11, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_D+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_G+5*OCT,  1
-        SNOTE   0,  9, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-tuneB15_v0:
-        SCALL   setupB
-        SNOTE   0, 11, NT_C+4*OCT,  0
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+5*OCT,  0
-        SNOTE   2,  6, NT_DS+6*OCT, 1
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   0, 11, NT_C+4*OCT,  0
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+5*OCT,  0
-        SNOTE   2,  6, NT_DS+6*OCT, 1
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   0,  9, NT_F+4*OCT,  0
-        SNOTE   1,  9, NT_GS+5*OCT, 0
-        SNOTE   2,  9, NT_C+6*OCT,  1
-        SNOTE   0,  9, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_F+6*OCT,  1
-        SNOTE   0,  9, NT_C+5*OCT,  0
-        SNOTE   1,  9, NT_F+6*OCT,  0
-        SNOTE   2,  9, NT_GS+6*OCT, 1
-        SNOTE   0, 11, NT_C+4*OCT,  0
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+5*OCT,  0
-        SNOTE   2,  6, NT_DS+6*OCT, 1
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   0, 11, NT_C+4*OCT,  0
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+5*OCT,  0
-        SNOTE   2,  6, NT_DS+6*OCT, 1
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   0,  9, NT_F+4*OCT,  0
-        SNOTE   1,  9, NT_GS+5*OCT, 0
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   0,  9, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   0,  9, NT_C+5*OCT,  0
-        SNOTE   1,  9, NT_F+6*OCT,  0
-        SNOTE   2,  9, NT_GS+7*OCT, 1
-        SNOTE   0, 11, NT_C+4*OCT,  0
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+5*OCT,  0
-        SNOTE   2,  6, NT_DS+6*OCT, 1
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   0, 11, NT_C+4*OCT,  0
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_DS+5*OCT, 1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_C+5*OCT,  0
-        SNOTE   2,  6, NT_DS+6*OCT, 1
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   0,  9, NT_F+4*OCT,  0
-        SNOTE   1,  9, NT_A+5*OCT,  0
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   0,  9, NT_A+4*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   0,  9, NT_C+5*OCT,  0
-        SNOTE   1,  9, NT_F+6*OCT,  0
-        SNOTE   2,  9, NT_GS+7*OCT, 1
-        SNOTE   1, 17, NT_C+6*OCT,  0
-        SNOTE   2, 17, NT_GS+7*OCT, 0
-        SNOTE   0, 12, NT_GS+4*OCT, 1
-        SNOTE   0,  9, NT_GS+4*OCT, 1
-        SNOTE   0, 12, NT_GS+4*OCT, 1
-        SNOTE   0,  9, NT_GS+4*OCT, 1
-        SNOTE   0, 12, NT_GS+4*OCT, 1
-tuneB16_v0:
-        SCALL   setupB
-        SNOTE   0,  9, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_DS+6*OCT, 1
-        SNOTE   0, 12, NT_GS+4*OCT, 0
-        SNOTE   2, 11, NT_E+6*OCT,  0
-        SNOTE   1, 11, NT_CS+6*OCT, 1
-        SNOTE   2,  6, NT_FS+6*OCT, 1
-        SNOTE   0,  9, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   2,  9, NT_GS+6*OCT, 1
-        SNOTE   1, 15, NT_C+6*OCT,  0
-        SNOTE   2, 15, NT_DS+6*OCT, 0
-        SNOTE   0, 12, NT_GS+4*OCT, 1
-        SNOTE   0,  9, NT_GS+4*OCT, 1
-        SNOTE   0, 12, NT_GS+4*OCT, 1
-        SNOTE   0,  9, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_DS+6*OCT, 1
-        SNOTE   0, 12, NT_GS+4*OCT, 0
-        SNOTE   2, 11, NT_E+6*OCT,  0
-        SNOTE   1, 11, NT_CS+6*OCT, 1
-        SNOTE   2,  6, NT_FS+6*OCT, 1
-        SNOTE   0,  9, NT_GS+4*OCT, 0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   2,  9, NT_GS+6*OCT, 1
-        SNOTE   1, 14, NT_DS+6*OCT, 0
-        SNOTE   0, 11, NT_B+3*OCT,  0
-        SNOTE   2,  9, NT_FS+6*OCT, 1
-        SNOTE   2,  9, NT_B+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_CS+4*OCT, 1
-        SNOTE   2,  9, NT_B+6*OCT,  0
-        SNOTE   0,  9, NT_DS+4*OCT, 1
-        SNOTE   0, 14, NT_E+4*OCT,  0
-        SNOTE   1, 14, NT_B+5*OCT,  0
-        SNOTE   2, 11, NT_GS+6*OCT, 1
-        SNOTE   2,  6, NT_FS+6*OCT, 1
-        SNOTE   2,  9, NT_E+6*OCT,  1
-        SNOTE   0, 14, NT_C+4*OCT,  0
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_E+6*OCT,  1
-        SNOTE   1,  9, NT_D+6*OCT,  0
-        SNOTE   2,  9, NT_FS+6*OCT, 1
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_E+6*OCT,  1
-        SNOTE   0, 14, NT_B+3*OCT,  0
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   2,  9, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_D+5*OCT,  0
-        SNOTE   2,  9, NT_G+5*OCT,  1
-        SNOTE   1, 15, NT_CS+6*OCT, 0
-        SNOTE   2, 15, NT_E+6*OCT,  0
-        SNOTE   0, 12, NT_A+3*OCT,  1
-        SNOTE   0,  9, NT_A+3*OCT,  1
-        SNOTE   0, 12, NT_A+3*OCT,  1
-        SNOTE   0,  9, NT_A+3*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   2,  9, NT_E+6*OCT,  1
-        SNOTE   0, 12, NT_A+3*OCT,  0
-        SNOTE   2, 11, NT_F+6*OCT,  0
-        SNOTE   1, 11, NT_D+6*OCT,  1
-        SNOTE   2,  6, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   0,  9, NT_A+3*OCT,  1
-        SNOTE   1, 15, NT_CS+6*OCT, 0
-        SNOTE   2, 15, NT_E+6*OCT,  0
-        SNOTE   0, 12, NT_A+3*OCT,  1
-        SNOTE   0,  9, NT_A+3*OCT,  1
-        SNOTE   0, 12, NT_A+3*OCT,  1
-        SNOTE   0,  9, NT_A+3*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   2,  9, NT_E+6*OCT,  1
-        SNOTE   1, 11, NT_D+6*OCT,  0
-        SNOTE   2, 11, NT_F+6*OCT,  0
-        SNOTE   0,  9, NT_D+4*OCT,  1
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   0,  9, NT_AS+3*OCT, 1
-        SNOTE   2, 15, NT_E+6*OCT,  0
-        SNOTE   1, 15, NT_CS+6*OCT, 0
-        SNOTE   0, 12, NT_A+3*OCT,  1
-        SNOTE   0,  9, NT_A+3*OCT,  1
-        SNOTE   0, 12, NT_A+3*OCT,  1
-        SNOTE   0,  9, NT_A+3*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   2,  9, NT_E+6*OCT,  1
-        SNOTE   0, 14, NT_G+4*OCT,  0
-        SNOTE   1, 11, NT_D+6*OCT,  0
-        SNOTE   2,  9, NT_FS+6*OCT, 1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_A+5*OCT,  0
-        SNOTE   2,  9, NT_FS+6*OCT, 1
-        SNOTE   1, 14, NT_CS+6*OCT, 0
-        SNOTE   2, 14, NT_E+6*OCT,  0
-        SNOTE   0, 12, NT_A+3*OCT,  1
-        SNOTE   0,  9, NT_A+3*OCT,  1
-        SNOTE   1, 11, NT_D+6*OCT,  0
-        SNOTE   0,  9, NT_G+4*OCT,  0
-        SNOTE   2,  9, NT_FS+6*OCT, 1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   0,  9, NT_D+4*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   1,  9, NT_A+5*OCT,  0
-        SNOTE   2,  9, NT_FS+6*OCT, 0
-        SNOTE   0,  9, NT_G+4*OCT,  1
-        SNOTE   2, 17, NT_E+6*OCT,  0
-        SNOTE   1, 12, NT_B+5*OCT,  0
-        SNOTE   0,  9, NT_B+3*OCT,  1
-        SNOTE   0,  9, NT_FS+4*OCT, 1
-        SNOTE   0,  9, NT_B+4*OCT,  1
-        SNOTE   1, 12, NT_A+5*OCT,  0
-        SNOTE   0,  9, NT_B+3*OCT,  1
-        SNOTE   0,  9, NT_FS+4*OCT, 1
-        SNOTE   0,  9, NT_B+4*OCT,  1
-        SNOTE   2, 17, NT_DS+6*OCT, 0
-        SNOTE   1, 12, NT_G+5*OCT,  0
-        SNOTE   0,  9, NT_B+3*OCT,  1
-        SNOTE   0,  9, NT_FS+4*OCT, 1
-        SNOTE   0,  9, NT_B+4*OCT,  1
-        SNOTE   1, 12, NT_FS+5*OCT, 0
-        SNOTE   0,  9, NT_B+3*OCT,  1
-        SNOTE   0,  9, NT_FS+4*OCT, 1
-        SNOTE   0,  9, NT_B+4*OCT,  1
-tuneB17_v0:
-        SCALL   setupB
-        SNOTE   2, 11, NT_B+5*OCT,  0
-        SNOTE   0, 11, NT_E+4*OCT,  0
-        SNOTE   1, 11, NT_G+5*OCT,  0
-        SNOTE   0,  9, REST,        1
-        SNOTE   0,  9, NT_B+4*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_E+6*OCT,  0
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   0,  9, NT_E+5*OCT,  0
-        SNOTE   1,  9, NT_E+6*OCT,  1
-        SNOTE   2,  9, NT_FS+6*OCT, 0
-        SNOTE   0,  9, NT_FS+4*OCT, 0
-        SNOTE   1,  9, NT_DS+6*OCT, 1
-        SNOTE   2,  9, NT_E+6*OCT,  0
-        SNOTE   0,  9, NT_B+4*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 1
-        SNOTE   2,  9, NT_FS+6*OCT, 0
-        SNOTE   0,  9, NT_FS+5*OCT, 0
-        SNOTE   1,  9, NT_DS+6*OCT, 1
-        SNOTE   2, 11, NT_G+6*OCT,  0
-        SNOTE   1, 11, NT_D+6*OCT,  0
-        SNOTE   0,  9, NT_G+4*OCT,  0
-        SNOTE   0,  9, REST,        1
-        SNOTE   0,  9, NT_D+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_FS+6*OCT, 0
-        SNOTE   1,  6, NT_D+6*OCT,  1
-        SNOTE   2,  9, NT_E+6*OCT,  0
-        SNOTE   0,  9, NT_G+5*OCT,  0
-        SNOTE   1,  9, NT_D+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   0,  9, NT_A+4*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   2,  9, NT_C+6*OCT,  0
-        SNOTE   0,  9, NT_E+5*OCT,  0
-        SNOTE   1,  9, NT_A+5*OCT,  1
-        SNOTE   2,  9, NT_A+5*OCT,  0
-        SNOTE   0,  9, NT_A+4*OCT,  0
-        SNOTE   1,  9, NT_FS+5*OCT, 1
-        SNOTE   2, 11, NT_B+5*OCT,  0
-        SNOTE   1, 11, NT_G+5*OCT,  0
-        SNOTE   0,  9, NT_B+3*OCT,  0
-        SNOTE   0,  9, REST,        1
-        SNOTE   0,  9, NT_B+4*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_E+6*OCT,  0
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   0,  9, NT_B+3*OCT,  0
-        SNOTE   1,  9, NT_E+6*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_FS+6*OCT, 1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   0,  9, NT_C+5*OCT,  0
-        SNOTE   1,  9, NT_E+6*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_FS+6*OCT, 1
-        SNOTE   2, 17, NT_B+6*OCT,  0
-        SNOTE   1, 14, NT_E+6*OCT,  0
-        SNOTE   0, 11, NT_B+3*OCT,  1
-        SNOTE   0,  6, NT_B+4*OCT,  1
-        SNOTE   0,  9, NT_B+3*OCT,  1
-        SNOTE   1, 14, NT_DS+6*OCT, 0
-        SNOTE   0, 11, NT_B+3*OCT,  1
-        SNOTE   0,  6, NT_B+4*OCT,  1
-        SNOTE   0,  9, NT_B+3*OCT,  1
-        SNOTE   0, 12, NT_C+4*OCT,  0
-        SNOTE   1, 12, NT_E+6*OCT,  0
-        SNOTE   2, 11, NT_B+6*OCT,  1
-        SNOTE   2,  6, NT_B+6*OCT,  1
-        SNOTE   2,  9, NT_B+6*OCT,  1
-        SNOTE   1, 12, NT_D+6*OCT,  0
-        SNOTE   0, 12, NT_G+4*OCT,  0
-        SNOTE   2,  9, NT_B+6*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  1
-        SNOTE   0, 12, NT_C+4*OCT,  0
-        SNOTE   1, 12, NT_E+6*OCT,  0
-        SNOTE   2, 11, NT_B+6*OCT,  1
-        SNOTE   2,  6, NT_B+6*OCT,  1
-        SNOTE   2,  9, NT_B+6*OCT,  1
-        SNOTE   1, 12, NT_D+6*OCT,  0
-        SNOTE   0, 12, NT_G+4*OCT,  0
-        SNOTE   2,  9, NT_B+6*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  1
-        SNOTE   0, 12, NT_C+4*OCT,  0
-        SNOTE   1, 12, NT_E+6*OCT,  0
-        SNOTE   2, 11, NT_B+6*OCT,  1
-        SNOTE   2,  6, NT_A+6*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   0, 12, NT_C+4*OCT,  0
-        SNOTE   1, 12, NT_E+6*OCT,  0
-        SNOTE   2,  9, NT_A+6*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_E+6*OCT,  1
-        SNOTE   0, 17, NT_B+3*OCT,  0
-        SNOTE   2, 17, NT_FS+6*OCT, 0
-        SNOTE   1,  6, NT_DS+6*OCT, 1
-        SNOTE   1,  6, NT_DS+4*OCT, 1
-        SNOTE   1,  6, NT_FS+4*OCT, 1
-        SNOTE   1,  6, NT_A+4*OCT,  1
-        SNOTE   1,  6, NT_B+4*OCT,  1
-        SNOTE   1,  6, NT_DS+5*OCT, 1
-        SNOTE   1,  6, NT_FS+5*OCT, 1
-        SNOTE   1,  6, NT_A+5*OCT,  1
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   1,  6, NT_DS+6*OCT, 1
-        SNOTE   1,  6, NT_FS+6*OCT, 1
-        SNOTE   1,  6, NT_A+6*OCT,  1
-tuneB18_v0:
-        SCALL   setupB
-        SNOTE   2, 14, NT_B+6*OCT,  0
-        SNOTE   1, 14, NT_G+6*OCT,  0
-        SNOTE   0, 11, NT_B+4*OCT,  1
-        SNOTE   0,  6, NT_E+5*OCT,  1
-        SNOTE   0,  9, NT_G+5*OCT,  1
-        SNOTE   2, 14, NT_B+6*OCT,  0
-        SNOTE   1, 14, NT_A+6*OCT,  0
-        SNOTE   0,  9, NT_FS+5*OCT, 1
-        SNOTE   0,  9, NT_E+5*OCT,  1
-        SNOTE   0,  9, NT_FS+5*OCT, 1
-        SNOTE   2, 14, NT_B+6*OCT,  0
-        SNOTE   1, 14, NT_G+6*OCT,  0
-        SNOTE   0, 11, NT_G+5*OCT,  1
-        SNOTE   0,  6, NT_B+4*OCT,  1
-        SNOTE   0,  9, NT_E+5*OCT,  1
-        SNOTE   2, 14, NT_C+7*OCT,  0
-        SNOTE   1, 14, NT_A+6*OCT,  0
-        SNOTE   0,  9, NT_D+5*OCT,  1
-        SNOTE   0,  9, NT_C+5*OCT,  1
-        SNOTE   0,  9, NT_A+4*OCT,  1
-        SNOTE   2, 14, NT_B+6*OCT,  0
-        SNOTE   1, 14, NT_G+6*OCT,  0
-        SNOTE   0, 11, NT_B+4*OCT,  1
-        SNOTE   0,  6, NT_E+5*OCT,  1
-        SNOTE   0,  9, NT_G+5*OCT,  1
-        SNOTE   2, 14, NT_C+7*OCT,  0
-        SNOTE   1, 14, NT_G+6*OCT,  0
-        SNOTE   0,  9, NT_A+5*OCT,  1
-        SNOTE   0,  9, NT_G+5*OCT,  1
-        SNOTE   0,  9, NT_A+5*OCT,  1
-        SNOTE   0, 17, NT_B+5*OCT,  0
-        SNOTE   1, 14, NT_G+6*OCT,  0
-        SNOTE   2, 14, NT_B+6*OCT,  1
-        SNOTE   2, 14, NT_B+6*OCT,  0
-        SNOTE   1, 14, NT_FS+6*OCT, 1
-        SNOTE   0, 12, NT_C+4*OCT,  0
-        SNOTE   2, 11, NT_B+6*OCT,  0
-        SNOTE   1,  6, NT_E+5*OCT,  1
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   1,  6, NT_C+6*OCT,  1
-        SNOTE   1,  6, NT_E+5*OCT,  0
-        SNOTE   2,  6, NT_E+7*OCT,  1
-        SNOTE   2,  9, NT_B+6*OCT,  0
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   1,  6, NT_C+6*OCT,  1
-        SNOTE   0, 12, NT_G+4*OCT,  0
-        SNOTE   2,  9, NT_D+7*OCT,  0
-        SNOTE   1,  6, NT_D+5*OCT,  1
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   2,  9, NT_B+6*OCT,  0
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   1,  6, NT_D+5*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   0, 12, NT_C+4*OCT,  0
-        SNOTE   2, 11, NT_E+6*OCT,  0
-        SNOTE   1,  6, NT_E+5*OCT,  1
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   1,  6, NT_C+6*OCT,  1
-        SNOTE   1,  6, NT_E+5*OCT,  0
-        SNOTE   2,  6, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_C+7*OCT,  0
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   1,  6, NT_C+6*OCT,  1
-        SNOTE   0, 12, NT_G+4*OCT,  0
-        SNOTE   2,  9, NT_B+6*OCT,  0
-        SNOTE   1,  6, NT_D+5*OCT,  1
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   1,  6, NT_D+5*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  6, NT_G+5*OCT,  1
-        SNOTE   1,  6, NT_B+5*OCT,  1
-        SNOTE   1, 12, NT_AS+5*OCT, 0
-        SNOTE   2, 11, NT_A+6*OCT,  1
-        SNOTE   2,  6, NT_D+7*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  1
-        SNOTE   1, 12, NT_F+5*OCT,  0
-        SNOTE   2,  9, NT_C+7*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  1
-        SNOTE   2,  9, NT_F+6*OCT,  1
-        SNOTE   1, 12, NT_AS+5*OCT, 0
-        SNOTE   2, 11, NT_D+6*OCT,  1
-        SNOTE   2,  6, NT_F+6*OCT,  1
-        SNOTE   2,  9, NT_AS+6*OCT, 1
-        SNOTE   1, 12, NT_F+5*OCT,  0
-        SNOTE   2,  9, NT_A+6*OCT,  1
-        SNOTE   2,  9, NT_F+6*OCT,  1
-        SNOTE   2,  9, NT_C+6*OCT,  1
-tuneB19_v0:
-        SCALL   setupB
-        SNOTE   0, 14, NT_D+5*OCT,  0
-        SNOTE   1, 14, NT_AS+5*OCT, 0
-        SNOTE   2, 11, NT_A+6*OCT,  1
-        SNOTE   2,  6, NT_F+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   1, 12, NT_B+5*OCT,  0
-        SNOTE   0, 12, NT_D+4*OCT,  1
-        SNOTE   0,  9, NT_D+4*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   0, 12, NT_D+4*OCT,  0
-        SNOTE   1, 12, NT_B+5*OCT,  1
-        SNOTE   0,  9, NT_D+4*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   0, 14, NT_D+5*OCT,  0
-        SNOTE   1, 14, NT_AS+5*OCT, 0
-        SNOTE   2, 11, NT_A+6*OCT,  1
-        SNOTE   2,  6, NT_F+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  1
-        SNOTE   2, 17, NT_G+6*OCT,  0
-        SNOTE   1, 12, NT_B+5*OCT,  0
-        SNOTE   0, 12, NT_D+4*OCT,  1
-        SNOTE   0,  9, NT_D+4*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   0, 12, NT_D+4*OCT,  0
-        SNOTE   1, 12, NT_B+5*OCT,  1
-        SNOTE   0,  9, NT_D+4*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   2, 11, NT_A+6*OCT,  0
-        SNOTE   1,  9, NT_D+5*OCT,  1
-        SNOTE   0, 12, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_F+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_F+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_AS+5*OCT, 1
-        SNOTE   2, 11, NT_AS+6*OCT, 0
-        SNOTE   1,  9, NT_D+5*OCT,  1
-        SNOTE   0, 12, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_D+6*OCT,  0
-        SNOTE   1,  9, NT_AS+5*OCT, 1
-        SNOTE   2, 11, NT_B+6*OCT,  0
-        SNOTE   1,  9, NT_D+5*OCT,  1
-        SNOTE   0, 12, NT_G+4*OCT,  0
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_F+6*OCT,  0
-        SNOTE   1,  9, NT_B+5*OCT,  1
-        SNOTE   2, 11, NT_C+7*OCT,  0
-        SNOTE   1,  9, NT_E+5*OCT,  1
-        SNOTE   0, 12, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_G+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_G+6*OCT,  1
-        SNOTE   2,  9, NT_F+6*OCT,  0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   2, 11, NT_CS+7*OCT, 0
-        SNOTE   1,  9, NT_E+5*OCT,  1
-        SNOTE   0, 12, NT_A+3*OCT,  0
-        SNOTE   1,  9, NT_A+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_A+6*OCT,  1
-        SNOTE   2,  9, NT_G+6*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 1
-        SNOTE   2, 11, NT_D+7*OCT,  0
-        SNOTE   1,  9, NT_F+5*OCT,  1
-        SNOTE   0, 12, NT_D+4*OCT,  0
-        SNOTE   1,  9, NT_A+5*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   2,  6, NT_A+6*OCT,  1
-        SNOTE   2,  9, NT_F+6*OCT,  0
-        SNOTE   1,  9, NT_D+6*OCT,  1
-        SNOTE   2,  9, NT_E+7*OCT,  0
-        SNOTE   0,  9, NT_C+4*OCT,  0
-        SNOTE   1,  9, NT_A+6*OCT,  1
-        SNOTE   0, 11, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_G+6*OCT,  0
-        SNOTE   2,  9, NT_F+7*OCT,  1
-        SNOTE   2,  9, NT_G+7*OCT,  0
-        SNOTE   1,  9, NT_D+6*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   2,  9, NT_GS+7*OCT, 0
-        SNOTE   0,  9, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  1
-        SNOTE   0, 14, NT_A+3*OCT,  0
-        SNOTE   1, 11, NT_CS+6*OCT, 0
-        SNOTE   2, 11, NT_A+7*OCT,  1
-        SNOTE   2,  6, NT_A+6*OCT,  0
-        SNOTE   1,  6, NT_CS+6*OCT, 1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 1
-        SNOTE   0, 14, NT_AS+3*OCT, 0
-        SNOTE   1, 11, NT_D+6*OCT,  0
-        SNOTE   2, 11, NT_A+7*OCT,  1
-        SNOTE   2,  6, NT_A+6*OCT,  0
-        SNOTE   1,  6, NT_D+6*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   1,  9, NT_D+6*OCT,  1
-        SNOTE   0, 11, NT_A+3*OCT,  0
-        SNOTE   1, 11, NT_CS+6*OCT, 0
-        SNOTE   2, 11, NT_A+7*OCT,  1
-        SNOTE   2,  6, NT_A+6*OCT,  0
-        SNOTE   0,  6, NT_B+3*OCT,  0
-        SNOTE   1,  6, NT_CS+6*OCT, 1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   0,  9, NT_CS+4*OCT, 1
-        SNOTE   2,  9, NT_D+7*OCT,  0
-        SNOTE   1,  9, NT_F+6*OCT,  0
-        SNOTE   0,  9, NT_D+4*OCT,  1
-        SNOTE   0, 11, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_E+6*OCT,  0
-        SNOTE   2,  9, NT_E+7*OCT,  1
-        SNOTE   1,  9, NT_D+6*OCT,  0
-        SNOTE   2,  9, NT_F+7*OCT,  0
-        SNOTE   0,  6, REST,        1
-        SNOTE   0,  6, NT_AS+4*OCT, 1
-        SNOTE   0,  9, NT_AS+3*OCT, 0
-        SNOTE   1,  9, NT_C+6*OCT,  0
-        SNOTE   2,  9, NT_G+7*OCT,  1
-        SNOTE   0, 14, NT_A+3*OCT,  0
-        SNOTE   1, 11, NT_CS+6*OCT, 0
-        SNOTE   2, 11, NT_A+7*OCT,  1
-        SNOTE   2,  6, NT_A+6*OCT,  0
-        SNOTE   1,  6, NT_CS+6*OCT, 1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 1
-        SNOTE   0, 14, NT_AS+3*OCT, 0
-        SNOTE   1, 11, NT_D+6*OCT,  0
-        SNOTE   2, 11, NT_A+7*OCT,  1
-        SNOTE   2,  6, NT_A+6*OCT,  0
-        SNOTE   1,  6, NT_D+6*OCT,  1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   1,  9, NT_D+6*OCT,  1
-        SNOTE   2, 11, NT_A+7*OCT,  0
-        SNOTE   0, 11, NT_A+3*OCT,  0
-        SNOTE   1, 11, NT_CS+6*OCT, 1
-        SNOTE   2,  6, NT_A+6*OCT,  0
-        SNOTE   0,  6, NT_B+3*OCT,  0
-        SNOTE   1,  6, NT_CS+6*OCT, 1
-        SNOTE   2,  9, NT_A+6*OCT,  0
-        SNOTE   1,  9, NT_CS+6*OCT, 0
-        SNOTE   0,  9, NT_CS+4*OCT, 1
-        SNOTE   0,  9, NT_D+4*OCT,  0
-        SNOTE   2,  9, NT_D+7*OCT,  0
-        SNOTE   1,  9, NT_F+6*OCT,  1
+tuneB20_v0:
+        SCALL   tuneB20_setup
         SWAIT   0
-; Initialize the Tandy voices, transpose down 45 semitones,
-; and assign envelopes, release timing and LFO waveforms.
-setupB:
+tuneB20_setup:
         SCLEAR  1
         SSET    vfReleaseLead,   0Ch
         SSET    vfTranspose,     0FFD3h
-        SSET    vfEnvBase,       setupB_env_v1
+        SSET    vfEnvBase,       tuneB20_env_v1
         SSET    vfLfoTable,      lfoSine
         SSET    vfLfoWrap,       1000h
         SSET    vfLfoDepth,      28h
@@ -3157,7 +966,7 @@ setupB:
         SCLEAR  2
         SSET    vfReleaseLead,   7
         SSET    vfTranspose,     0FFD3h
-        SSET    vfEnvBase,       setupB_env_v2
+        SSET    vfEnvBase,       tuneB20_env_v2
         SSET    vfLfoTable,      lfoSine
         SSET    vfLfoWrap,       1000h
         SSET    vfLfoDepth,      16h
@@ -3165,15 +974,14 @@ setupB:
         SCLEAR  0
         SSET    vfReleaseLead,   7
         SSET    vfTranspose,     0FFD3h
-        SSET    vfEnvBase,       setupB_env_v0
+        SSET    vfEnvBase,       tuneB20_env_v0
         SSET    vfLfoTable,      lfoZero
         SSET    vfLfoWrap,       200h
         SSET    vfLfoDepth,      0C8h
         SSET    vfLfoRate,       10h
         SSET    vfTempo,         6
         SRET
-; Tandy voice envelopes.
-setupB_env_v2:
+tuneB20_env_v2:
         SENV    0C350h,          ENV_SETLEVEL
         SENV    9C4h,            4
         SENV    0F830h,          6
@@ -3182,7 +990,7 @@ setupB_env_v2:
         SENV    0E0C0h,          6
         SENV    0,               ENV_SETLEVEL
         SENV    0,               0
-setupB_env_v1:
+tuneB20_env_v1:
         SENV    9C40h,           ENV_SETLEVEL
         SENV    9C4h,            8
         SENV    0F448h,          5
@@ -3191,7 +999,7 @@ setupB_env_v1:
         SENV    0F060h,          11
         SENV    0,               ENV_SETLEVEL
         SENV    0,               0
-setupB_env_v0:
+tuneB20_env_v0:
         SENV    0DEA8h,          ENV_SETLEVEL
         SENV    0FA24h,          6
         SENV    0,               0
@@ -3200,6 +1008,14 @@ setupB_env_v0:
         SENV    0E0C0h,          6
         SENV    0,               ENV_SETLEVEL
         SENV    0,               0
+tuneB19_v0:
+        SSET    vfPeriod,        1F40h
+        SSET    vfLevel,         7530h
+        SSET    vfPeriodAdd,     14h
+        SSET    vfLevelAdd,      0FF9Ch
+        SWAIT   16
+        SSET    vfLevel,         0
+        SWAIT   0
 
 ; Saved BIOS timer vector, restored by UninstallSoundTimer.
 oldInt8Off      dw      0
@@ -3208,7 +1024,8 @@ oldInt8Seg      dw      0
 ; ---------------------------------------------------------------------------
 ; Playback routines.
 ; ---------------------------------------------------------------------------
-
+; Channel 0 retains the BIOS periodic low/high-byte setup. The control write
+; below selects channel 2; only the period writes address channel 0.
 InstallSoundTimer:
         push    ds
         push    es
@@ -3225,9 +1042,9 @@ InstallSoundTimer:
         mov     ax, 2508h               ; DOS set-vector, INT 8
         int     21h
         pop     ds
-        mov     al, 0B6h                ; PIT control selects ch2, lo/hi byte, mode 3
+        mov     al, 0B6h                ; selects PIT ch2, lo/hi, mode 3; divisor below goes to ch0
         out     43h, al
-        mov     ax, 13B1h               ; divisor sent to ch0; its control mode is unchanged
+        mov     ax, 13B1h               ; ch0 divisor 5041 under the inherited BIOS setup
         out     40h, al
         mov     al, ah
         out     40h, al
@@ -3246,14 +1063,14 @@ UninstallSoundTimer:
         mov     ax, 2508h               ; put the displaced handler back
         int     21h
         pop     ds
-        mov     ax, 0FFFFh              ; restore ch0 reload value; its mode is unchanged
+        mov     ax, 0FFFFh              ; ch0 divisor 65535 under the inherited BIOS setup
         out     40h, al
         mov     al, ah
         out     40h, al
         in      al, 61h                 ; drop the speaker gate and the timer gate
         and     al, 0FCh
         out     61h, al
-        mov     al, 9Fh                 ; full attenuation on the SN76489's
+        mov     al, 09Fh                ; full attenuation on the SN76489's
         out     0C0h, al                ;   three tone voices and its noise voice
         mov     al, 0BFh
         out     0C0h, al
@@ -3265,8 +1082,7 @@ UninstallSoundTimer:
         retf
 
 ; The timer ISR.  It runs with interrupts on, so seqBusy and not the interrupt flag
-; is what keeps it out of the voice writers.  The EOI goes out before any work, so
-; the BIOS handler's own EOI on the 13th tick is a second one.
+; is what keeps it out of the voice writers.
 P_isr:
         sti
         push    ax
@@ -3274,27 +1090,61 @@ P_isr:
         push    dx
         push    ds
         push    si
-        mov     al, 20h                 ; EOI to the 8259
-        out     20h, al
         mov     ax, CODE
         mov     ds, ax
-        cmp     byte ptr cs:[seqBusy], 0
+        cmp     ds:[exitCount], 0
+        jz      isr_tick
+        dec     ds:[exitCount]
+        jnz     isr_tick
+        mov     ah, 0Fh                 ; read the video mode, then set it again,
+        int     10h                     ;   which clears the screen
+        mov     ah, 0
+        int     10h
+        mov     bl, 7
+        mov     ah, 7Fh                 ; strip bit 7 off exitMsg in place
+        mov     cx, 33
+        mov     bx, CODE
+        mov     es, bx
+        mov     bx, offset exitMsg
+isr_msgclr:
+        mov     al, es:[bx]
+        and     al, ah
+        mov     es:[bx], al
+        inc     bx
+        loop    isr_msgclr
+        mov     bl, 7
+        mov     ah, 13h                 ; write string, attribute in BL, move cursor
+        mov     al, 1
+        mov     bh, 0
+        mov     cx, 33
+        xor     dx, dx
+        mov     bp, CODE
+        mov     es, bp
+        mov     bp, offset exitMsg
+        int     10h
+        mov     ah, 4Ch                 ; terminate, exit code 0FFh
+        mov     al, 0FFh
+        int     21h
+isr_tick:
+        cmp     ds:[seqBusy], 0
         jnz     isr_div
-        mov     byte ptr cs:[seqBusy], 1
+        mov     ds:[seqBusy], 1
         call    tick_spkr
         call    tick_tandy
-        mov     byte ptr cs:[seqBusy], 0
+        mov     ds:[seqBusy], 0
 isr_div:
-        dec     byte ptr cs:[divCount]
-        jnz     isr_done
-        mov     byte ptr cs:[divCount], 13      ; chain the saved handler every 13 ticks
-        pop     si
+        dec     ds:[divCount]
+        jnz     isr_eoi
+        mov     ds:[divCount], 13       ; chain the saved handler every 13th ch0 tick
+        pop     si                      ;   the BIOS handler sends its own EOI
         pop     ds
         pop     dx
         pop     bx
         pop     ax
         jmp     dword ptr cs:[oldInt8Off]
-isr_done:
+isr_eoi:
+        mov     al, 20h
+        out     20h, al
         pop     si
         pop     ds
         pop     dx
@@ -3306,34 +1156,34 @@ isr_done:
 ; that came out of voice_step with a level and a duration left.  One channel, so
 ; once spkrVoice is set the rest of the pass cannot claim it.
 tick_spkr:
-        mov     bx, cs:[curTune]
+        mov     bx, ds:[curTune]
         cmp     bx, 0
         jz      spkr_set
-        mov     word ptr cs:[spkrVoice], 0
-        mov     byte ptr cs:[voiceLeft], 4
+        mov     ds:[spkrVoice], 0
+        mov     ds:[voiceLeft], 4
         mov     si, offset spkrFreq
-        mov     cs:[freqBase], si
+        mov     ds:[freqBase], si
         mov     si, offset spkrBlocks
-        mov     cs:[voiceBase], si
+        mov     ds:[voiceBase], si
 spkr_loop:
         cmp     [si].vfDuration, 0
         jz      spkr_next
         call    voice_step
-        cmp     word ptr cs:[spkrVoice], 0
+        cmp     ds:[spkrVoice], 0
         jnz     spkr_next
         cmp     [si].vfLevel, 0
         jz      spkr_next
         cmp     [si].vfDuration, 0
         jz      spkr_next
-        mov     cs:[spkrVoice], si
+        mov     ds:[spkrVoice], si
 spkr_next:
         add     si, SIZE VOICE
-        dec     byte ptr cs:[voiceLeft]
+        dec     ds:[voiceLeft]
         jnz     spkr_loop
-        mov     bl, cs:[outputOn]
+        mov     bl, ds:[outputOn]
         cmp     bl, 0
         jz      spkr_set
-        mov     bx, cs:[spkrVoice]
+        mov     bx, ds:[spkrVoice]
         cmp     bx, 0
         jz      spkr_set
         mov     si, bx
@@ -3354,26 +1204,26 @@ spkr_set:
 ; latch bytes 80h, 0A0h, 0C0h, 0E0h -- voice 0 to voice 2 are tone, and 0E0h is
 ; the noise voice, which takes no second period byte.
 tick_tandy:
-        mov     bx, cs:[curTune]
+        mov     bx, ds:[curTune]
         cmp     bx, 0
         jz      tandy_off
-        mov     byte ptr cs:[voiceLeft], 4
+        mov     ds:[voiceLeft], 4
         mov     si, offset tandyFreq
-        mov     cs:[freqBase], si
+        mov     ds:[freqBase], si
         mov     si, offset tandyBlocks
-        mov     cs:[voiceBase], si
+        mov     ds:[voiceBase], si
 tandy_loop1:
         cmp     [si].vfDuration, 0
         jz      tandy_skip1
         call    voice_step
 tandy_skip1:
         add     si, SIZE VOICE
-        dec     byte ptr cs:[voiceLeft]
+        dec     ds:[voiceLeft]
         jnz     tandy_loop1
-        mov     al, cs:[outputOn]
+        mov     al, ds:[outputOn]
         cmp     al, 0
         jz      tandy_off
-        mov     byte ptr cs:[voiceLeft], 4
+        mov     ds:[voiceLeft], 4
         mov     si, offset tandyBlocks
         mov     dl, 80h
 tandy_loop2:
@@ -3403,11 +1253,11 @@ tandy_noatt:
         out     0C0h, al
         add     dl, 20h
         add     si, SIZE VOICE
-        dec     byte ptr cs:[voiceLeft]
+        dec     ds:[voiceLeft]
         jnz     tandy_loop2
         ret
 tandy_off:
-        mov     al, 9Fh
+        mov     al, 09Fh
         out     0C0h, al
         mov     al, 0BFh
         out     0C0h, al
@@ -3472,7 +1322,7 @@ vs_relloop:
         mov     [si].vfLevelAdd, ax     ; a zero level stops the slide with it
 vs_relskip:
         add     [si].vfEnvPos, 4
-        jmp     short vs_relloop
+        jmp     vs_relloop
 vs_relset:
         mov     ax, [bx]
         mov     [si].vfLevelAdd, ax
@@ -3491,7 +1341,7 @@ seq_proc:
         jnz     seq_go
         ret
 seq_go:
-        mov     cs:[seqVoice], si
+        mov     ds:[seqVoice], si
 seq_loop:
         mov     bl, [di]
         inc     di
@@ -3502,7 +1352,7 @@ seq_cmd:
         sub     bh, bh
         sub     bl, 0FAh
         add     bl, bl
-        jmp     cs:[bx+cmdTable]
+        jmp     cmdTable[bx]
 seq_c_loop:                             ; 0FEh  SLOOP
         mov     bl, [di]
         inc     di
@@ -3515,11 +1365,11 @@ seq_c_loop:                             ; 0FEh  SLOOP
         jz      seq_loop
 seq_c_loop_set:
         mov     di, ax
-        jmp     short seq_loop
+        jmp     seq_loop
 seq_c_clear:                            ; 0FDh  SCLEAR
         mov     si, [di]
         add     di, 2
-        add     si, cs:[voiceBase]
+        add     si, ds:[voiceBase]
 seq_c_reset:                            ; 0FAh  SRESET -- and SCLEAR's tail
         sub     bx, bx
         mov     [si].vfPeriod, bx
@@ -3537,7 +1387,7 @@ seq_c_reset:                            ; 0FAh  SRESET -- and SCLEAR's tail
         mov     [si].vfLfoRate, bx
         mov     [si].vfLfoDepth, bx
         mov     [si].vfLfoWrap, bx      ; vfDuration, vfStream, vfTempo, vfGateLen
-        jmp     short seq_loop          ;   and both loop counters survive a reset
+        jmp     seq_loop                ;   and both loop counters survive a reset
 seq_c_set:                              ; 0FFh  SSET
         mov     bl, [di]
         inc     di
@@ -3549,30 +1399,29 @@ seq_c_set:                              ; 0FFh  SSET
         cmp     bl, 0                   ; field 0 is vfDuration, i.e. SWAIT, and a
         jnz     seq_loop                ;   SWAIT always yields
 seq_end:
-        mov     si, cs:[seqVoice]
+        mov     si, ds:[seqVoice]
         cmp     [si].vfDuration, 0
         jnz     seq_e_set
         mov     bl, 4                   ; 4 - voiceLeft is this voice's index
-        sub     bl, cs:[voiceLeft]
+        sub     bl, ds:[voiceLeft]
         sub     bh, bh
-        mov     byte ptr cs:[bx+voiceTune], 0
+        mov     voiceTune[bx], 0
         mov     di, 0
 seq_e_set:
         mov     [si].vfStream, di
         ret
 seq_c_ret:                              ; 0FBh  SRET
-        mov     di, cs:[seqRet]
+        mov     di, ds:[seqRet]
         jmp     seq_loop
 seq_c_call:                             ; 0FCh  SCALL
         mov     ax, [di]
         add     di, 2
-        mov     cs:[seqRet], di
+        mov     ds:[seqRet], di
         mov     di, ax
         jmp     seq_loop
 
-; A note record: voice index and noteLen index in the first byte, then the run-end
-; flag and the pitch in the second.  Records run back to back until one carries the
-; run-end flag.
+; A note record: voice index and unused low bits, then the last flag and the pitch,
+; then the duration.  Records run back to back until one carries the last flag.
 seq_note_b:
         mov     bl, [di]
         inc     di
@@ -3581,26 +1430,30 @@ seq_note:
         mov     al, bl
         mov     cl, 5
         shr     al, cl
-        mul     byte ptr cs:[blockSize]
-        add     ax, cs:[voiceBase]
-        mov     di, ax                  ; DI = the block of the voice this note is for
-        and     bx, 1Fh                 ; the low 5 bits are the noteLen index
-        mov     ax, [si].vfTempo
-        cmp     al, 0
-        jnz     sn_scale
-        inc     al                      ; tempo 0 plays as tempo 1
-sn_scale:
-        mul     byte ptr cs:[bx+noteLen]
-        mov     [si].vfDuration, ax
+        mov     cl, al                  ; CL = the voice this note is for
+        mul     ds:[blockSize]
+        add     ax, ds:[voiceBase]
+        mov     di, ax                  ; DI = that voice's block
         pop     bx
         push    bx
-        mov     al, [bx]                ; the run-end flag and the pitch share this byte
+        mov     ax, [si].vfTempo
+        cmp     al, 1
+        ja      sn_mul
+        xor     ah, ah
+        mov     al, [bx+1]
+        jmp     short sn_store
+sn_mul:
+        mul     byte ptr [bx+1]
+sn_store:
+        mov     [si].vfDuration, ax
+        mov     al, [bx]                ; the last flag and the pitch share this byte
         and     ax, 7Fh
         cmp     ax, REST
         jz      sn_tail
+        cmp     cl, 0                   ; DI was worked out for voice CL, but only
+        ja      sn_tail                 ;   voice 0 ever gets a pitch written
         mov     cx, [si].vfDuration
         mov     [di].vfDuration, cx
-        sub     cx, [di].vfReleaseLead
         mov     [di].vfGateLen, cx
         add     ax, [di].vfTranspose
         mov     [di].vfEnvPos, 0
@@ -3616,7 +1469,7 @@ sn_oct:
         cmp     di, offset tandyVoice3  ; Both branches continue at the next instruction.
         jnz     sn_notspec
 sn_notspec:
-        add     bx, cs:[freqBase]
+        add     bx, ds:[freqBase]
         mov     ax, [bx]
         shr     ax, cl
         mov     [di].vfPeriod, ax
@@ -3625,9 +1478,10 @@ sn_tail:
         pop     di
         mov     al, [di]
         inc     di
+        inc     di
         and     al, 80h
         jnz     sn_more
-        jmp     short seq_note_b
+        jmp     seq_note_b
 sn_more:
         jmp     seq_end
 
@@ -3644,15 +1498,15 @@ ProgramSpeakerVoices:
         mov     si, CODE
         mov     ds, si
         mov     si, [bp+6]              ; the tune id
-        mov     cs:[curTune], si
+        mov     ds:[curTune], si
         add     si, si
         add     si, si
         add     si, si                  ; * 8: four words per table row
-        mov     byte ptr cs:[seqBusy], 1
-        mov     byte ptr cs:[voiceLeft], 4
+        mov     ds:[seqBusy], 1
+        mov     ds:[voiceLeft], 4
         mov     di, offset spkrBlocks
 vwa_loop:
-        mov     ax, cs:[si+songTableA]
+        mov     ax, songTableA[si]
         cmp     ax, 0
         jz      vwa_next
         mov     bx, SIZE VOICE - 2
@@ -3662,24 +1516,24 @@ vwa_clr:
         jge     vwa_clr
         mov     [di].vfStream, ax
         mov     bl, 4
-        sub     bl, cs:[voiceLeft]
+        sub     bl, ds:[voiceLeft]
         sub     bh, bh
-        mov     ax, cs:[curTune]
-        mov     cs:[bx+voiceTune], al
+        mov     ax, ds:[curTune]
+        mov     voiceTune[bx], al
         mov     [di].vfDuration, 1
 vwa_next:
         add     di, SIZE VOICE
         add     si, 2
-        dec     byte ptr cs:[voiceLeft]
+        dec     ds:[voiceLeft]
         jnz     vwa_loop
-        mov     byte ptr cs:[seqBusy], 0
+        mov     ds:[seqBusy], 0
         pop     ds
         pop     si
         pop     di
         pop     bx
         pop     ax
         pop     bp
-        retf
+        retf    2
 
 ProgramTandyVoices:
         push    bp
@@ -3692,15 +1546,15 @@ ProgramTandyVoices:
         mov     si, CODE
         mov     ds, si
         mov     si, [bp+6]
-        mov     cs:[curTune], si
+        mov     ds:[curTune], si
         add     si, si
         add     si, si
         add     si, si
-        mov     byte ptr cs:[seqBusy], 1
-        mov     byte ptr cs:[voiceLeft], 4
+        mov     ds:[seqBusy], 1
+        mov     ds:[voiceLeft], 4
         mov     di, offset tandyBlocks
 vwb_loop:
-        mov     ax, cs:[si+songTableB]
+        mov     ax, songTableB[si]
         cmp     ax, 0
         jz      vwb_next
         mov     bx, SIZE VOICE - 2
@@ -3710,24 +1564,24 @@ vwb_clr:
         jge     vwb_clr
         mov     [di].vfStream, ax
         mov     bl, 4
-        sub     bl, cs:[voiceLeft]
+        sub     bl, ds:[voiceLeft]
         sub     bh, bh
-        mov     ax, cs:[curTune]
-        mov     cs:[bx+voiceTune], al
+        mov     ax, ds:[curTune]
+        mov     voiceTune[bx], al
         mov     [di].vfDuration, 1
 vwb_next:
         add     di, SIZE VOICE
         add     si, 2
-        dec     byte ptr cs:[voiceLeft]
+        dec     ds:[voiceLeft]
         jnz     vwb_loop
-        mov     byte ptr cs:[seqBusy], 0
+        mov     ds:[seqBusy], 0
         pop     ds
         pop     si
         pop     di
         pop     bx
         pop     ax
         pop     bp
-        retf
+        retf    2
 
 SetSoundOutputEnabled:
         push    bp
@@ -3737,11 +1591,11 @@ SetSoundOutputEnabled:
         mov     ax, CODE
         mov     ds, ax
         mov     ax, [bp+6]
-        mov     cs:[outputOn], al
+        mov     ds:[outputOn], al
         pop     ds
         pop     ax
         pop     bp
-        retf
+        retf    2
 
 CODE    ENDS
         END

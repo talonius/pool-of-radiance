@@ -4,7 +4,7 @@ unit Wilds;
 
 interface
 
-uses Types, Crt, C_Msg, GDConsts, GDVars, Border, MapTiles;
+uses Types, Crt, C_Msg, GDConsts, GDVars, Border, MapTiles, TextRend;
 
 { Draws the 5x5 wilderness view. Each cell's tile comes from the wilderness map; at a special location the location's
   own tile replaces it while the quest flags in zone 0 show the site: the buccaneers' base, the nomad camp, the kobold

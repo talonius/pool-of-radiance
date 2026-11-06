@@ -6,11 +6,11 @@ program FixMain;
 uses Types,
   Overlay, Crt, Dos, EmptyA,
   GDConsts, GDVars,
-  SoundDrv,
-  GameIo, DaxIo, TextRend, Blit, GameBoot, Sym8x8, Border, Debug, EmptyB, MapTiles, CbtMap, Pathing,
-  EmptyC, View3D, Portrait, Wilds, MapView, MenuCore, CharHlp, FxEngine, ClassCal, Magic, Money, GameTime,
-  ViewChar, Ending, SaveLoad, CharGen, Camp, Explore, CbtActs, EffHndlr, GameInit, CombatSt, CombatAi,
-  Combat, EclMenu, Shop, PostCbt, Temple, EclVm, CopyProt, Intro, HeapErr;
+  SoundDrv, GameIo, DaxIo, TextRend, Blit, GameBoot,
+  Sym8x8, Border, Debug, EmptyB, MapTiles, CbtMap, Pathing, EmptyC, View3D, Portrait, Wilds, MapView,
+  MenuCore, CharHlp, FxEngine, ClassCal, Magic, Money, GameTime, ViewChar, Ending, SaveLoad, CharGen, Camp,
+  Explore, CbtActs, EffHndlr, GameInit, CombatSt, CombatAi, Combat, EclMenu, Shop, PostCbt, Temple,
+  EclVm, CopyProt, Intro, HeapErr;
 
 {$O HeapErr}
 {$O Intro}

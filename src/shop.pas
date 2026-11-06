@@ -4,8 +4,7 @@ unit Shop;
 
 interface
 
-uses Types, Crt, C_Msg, GDConsts, GDVars, TextRend, Border, CharHlp, MenuCore, EclMenu, ViewChar, Money, C_Keys,
-  C_Ifc;
+uses Types, Crt, C_Msg, GDConsts, GDVars, EclMenu, ViewChar, Money, C_Keys, C_Ifc, Border, MenuCore, CharHlp, TextRend;
 
 { Runs the shop: buy, view, take, pool, share and appraise, with Take and Share offered only while there is pooled
   money. The pooled money starts empty. Leaving with money still in the pool asks whether to go back for it. }

@@ -4,7 +4,7 @@ unit Ending;
 
 interface
 
-uses Types, Crt, C_Tile, C_Msg, GDConsts, GDVars, Blit, TextRend, CharHlp, Wilds, Portrait, C_Gbvm;
+uses Types, Crt, C_Tile, C_Msg, GDConsts, GDVars, CharHlp, Wilds, Portrait, C_Gbvm, TextRend, Blit;
 
 { Plays the endgame: the dragon's death, Tyranthraxus' threat to possess a party member and Bane's recall, each with its
   text and a FINAL animation. The pictures are blocks of FINAL<n>.DAX, where n is the virtual disk number; blocks 4, 5
@@ -72,7 +72,7 @@ begin
   CharHlp.DisplayNoncombatInterface;
   Blit.LoadPic('FINAL' + GDVars.finalSfx, 1, False, 0, GDVars.finalPic);
   Blit.BlitTileClipped(0, 0, 0, 0, GDVars.finalPic, GDVars.viewBuffer);
-  Ending.PlayFinalAnim(3, 5, 2, (10 - GDVars.gameDelay) * 5 div 2);
+  Ending.PlayFinalAnim(3, 5, 2, Word(10 - GDVars.gameDelay) * 5 div 2);
   Blit.LoadPic('FINAL' + GDVars.finalSfx, 3, False, 0, GDVars.finalPic);
   Blit.BlitTileClipped(0, 0, 0, 0, GDVars.finalPic, GDVars.viewBuffer);
   if GDVars.zone1^[C_Gbvm.PARTY_SIZE] > 1 then begin
@@ -94,7 +94,7 @@ begin
   TextRend.DisplayString(1, 20, LightGreen, 'which I moved here, to my lair,');
   TextRend.DisplayString(1, 21, LightGreen, 'I will still rule, by possessing one');
   TextRend.DisplayString(1, 22, LightGreen, 'of you!"');
-  Ending.PlayFinalAnim(3, 1, 7, (10 - GDVars.gameDelay) * 5 div 2);
+  Ending.PlayFinalAnim(3, 1, 7, Word(10 - GDVars.gameDelay) * 5 div 2);
   TextRend.ClearRect(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM);
   TextRend.DisplayString(1, 17, LightGreen, '"No Lord Bane!  I can still rule here!');
   TextRend.DisplayString(1, 18, LightGreen, 'I have not failed.  Do not call me back');

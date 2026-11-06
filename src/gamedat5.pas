@@ -17,6 +17,12 @@ const
     (40, 40, 40, 40, 40, 40, 41, 41, 41, 41, 41),
     (40, 40, 40, 40, 40, 41, 41, 41, 41, 44, 44),
     (40, 40, 40, 40, 42, 42, 42, 44, 44, 44, 46));
+  krynnRules: Types.TKrynnClassRules = (
+    createClassBits: ($02, $20, $08, $40, $80, $01, $04, $10);
+    unidentifiedByte: 0;
+    classBits: ($02, $02, $08, $10, $20, $01, $04, $10);
+    unidentifiedTail: ($10, $10, $10, $20, $20, $20, $40, $40, $40);
+    maxClassLevels: (10, 15, 10, 10, 11, 12, 11, 10));
   defIconCol: array[1..6] of Byte = (1, 2, 3, 4, 6, 7);
   thiefBase: array[1..9, 1..8] of Byte = (
     (30, 25, 20, 15, 10, 10, 85, 0),
@@ -48,7 +54,7 @@ const
     (5, 10, 0, 5, 5),
     (10, 15, 5, 10, 10),
     (15, 20, 10, 12, 12));
-  dsMinimumMaximumStatistics: array[1..7] of Types.TRaceLim = (
+  dsMinimumMaximumStatistics: array[1..7] of Types.TRuleRace = (
     (strMin: (8, 8); strMax: (18, 17); excMax: (99, 0); intMin: 3; intMax: 18;
      wisMin: 3; wisMax: 18; dexMin: 3; dexMax: 17; conMin: 12; conMax: 19; chaMin: 3; chaMax: 16),
     (strMin: (3, 3); strMax: (18, 16); excMax: (75, 0); intMin: 8; intMax: 18;
@@ -73,7 +79,7 @@ const
     (6, 0, 2, 6, 8, 12, 14, 0, 0, 0, 0, 0),
     (4, 0, 2, 5, 6, 0, 0, 0, 0, 0, 0, 0));
   { race, class }
-  dsStartingAge: array[1..7, 0..6] of Types.TAgeRec = (
+  dsStartingAge: array[1..7, 0..6] of Types.TRuleAge = (
     ((base: 250; num: 2; sides: 20), (base: 0; num: 0; sides: 0), (base: 40; num: 5; sides: 4),
      (base: 0; num: 0; sides: 0), (base: 0; num: 0; sides: 0), (base: 0; num: 0; sides: 0),
      (base: 75; num: 3; sides: 6)),
@@ -142,7 +148,7 @@ const
      slots: ((0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0))),
     (xp: (-1, -1, -1, -1, -1, -1, -1, -1);
      slots: ((0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0))));
-  dsStartingGoldClass: array[0..7] of Types.TGoldDice = (
+  dsStartingGoldClass: array[0..7] of Types.TRuleGold = (
     (num: 3; sides: 6), (num: 3; sides: 6), (num: 5; sides: 4), (num: 5; sides: 4),
     (num: 5; sides: 4), (num: 2; sides: 4), (num: 2; sides: 6), (num: 5; sides: 4));
   { ClassCal: Saving throws indexed by class-level slot (the CLEVEL_ order), level 1..9 and save column 0..4. }
@@ -172,8 +178,6 @@ const
     ((13, 12, 14, 16, 15), (13, 12, 14, 16, 15), (13, 12, 14, 16, 15),
      (13, 12, 14, 16, 15), (12, 11, 12, 15, 13), (12, 11, 12, 15, 13),
      (12, 11, 12, 15, 13), (12, 11, 12, 15, 13), (11, 10, 10, 14, 11)));
-  { unused }
-  dsUnidentified16: Byte = (0);
 
 var
   { Door-opening flags }
@@ -186,6 +190,8 @@ var
   attackedAllies: Byte;
   { Combat round counter, 0-indexed }
   roundCounter: Byte;
+  { unused }
+  dsUnidentified70: Byte;
   { Potential-target creature indices. }
   dsPotentialTargetCreature: array[1..72] of Byte;
   { Primary and secondary attack counts. }
@@ -201,6 +207,8 @@ var
   { The combat moving-icon sheet: CombatSt allocates it, CharHlp copies icon facings in and draws from it, Combat frees
     it }
   dsMoveIconSheet: Types.PImgBuf;
+  { unused }
+  dsUnidentified60: array[0..301] of Byte;
 
 var
   { ECL colour selectors and read registers }
@@ -310,14 +318,7 @@ var
   { Picture id last shown, copied from GBVM_PIC_LOADING }
   picIdShown: Byte;
   { unused }
-  dsUnidentified37: Byte;
-
-var
-  { Reserved graphics area }
-  { FreePtr as GameBoot leaves it at startup }
-  dsReservedGraphicalAreaPtr: Pointer;
-  { unused }
-  dsUnidentified71: array[0..1] of Byte;
+  dsUnidentified37: array[0..3] of Byte;
 
 implementation
 

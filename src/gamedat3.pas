@@ -102,12 +102,28 @@ const
   { portraitBody -> BODY DAX ID }
   bodyTbl: array[1..12] of Byte = (
     1, 2, 3, 4, 7, 8, 18, 24, 26, 33, 35, 37);
+  { unused }
+  dsUnidentified14: array[0..1] of Byte = (
+    0, 1);
 
 const
   { Menu key and aim-vector tables }
   { keypad digits 1..9 to scan codes; MenuCore indexes Ord(ch) - Ord('1') }
   keypadScan: array[0..8] of Byte = (
     79, 80, 81, 75, 32, 77, 71, 72, 73);
+  { Arrow-key scan code (72 up, 75 left, 77 right, 80 down) for an aim vector, rows Y, columns X; unused }
+  vectorScan: array[-5..5, -5..5] of Byte = (
+    (72, 72, 72, 72, 72, 72, 72, 72, 72, 72, 72),
+    (75, 72, 72, 72, 72, 72, 72, 72, 72, 72, 77),
+    (75, 75, 72, 72, 72, 72, 72, 72, 72, 77, 77),
+    (75, 75, 75, 72, 72, 72, 72, 72, 77, 77, 77),
+    (75, 75, 75, 75, 72, 72, 72, 77, 77, 77, 77),
+    (75, 75, 75, 75, 75, 72, 77, 77, 77, 77, 77),
+    (75, 75, 75, 75, 80, 80, 80, 77, 77, 77, 77),
+    (75, 75, 75, 80, 80, 80, 80, 80, 77, 77, 77),
+    (75, 75, 80, 80, 80, 80, 80, 80, 80, 77, 77),
+    (75, 80, 80, 80, 80, 80, 80, 80, 80, 80, 77),
+    (80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80));
 
 const
   { Cloud directions, spell names and spell table }
@@ -683,10 +699,23 @@ var
   { Picture archive and menu state }
   { Current picture archive name. }
   picArcName: String[8];
+  { unused }
+  dsChampSavedPictureName: array[0..8] of Byte;
   { picture id loaded from picArcName; 255 invalidates the pair }
   picArcId: Byte;
+  { unused }
+  dsChampSavedPictureState: array[0..11] of Byte;
   { Zero-based position of the first visible list entry. }
   vertTop: Integer;
+  { Current horizontal menu choice, starting at 1. }
+  horizChoice: Byte;
+  { Extended scan-code flag. }
+  extFlag: Boolean;
+
+var
+  { Menu auto-answer }
+  { MenuCore views the head as Types.TMenuAuto }
+  dsMenuAutoAnswer: array[0..81] of Byte;
 
 var
   { Spell casting and targeting }

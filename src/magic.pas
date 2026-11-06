@@ -4,9 +4,9 @@ unit Magic;
 
 interface
 
-uses Types, Crt, C_Npc, C_Terr, C_Save, C_Cond, GDConsts, GDVars, TextRend, Border,
-  CharHlp, SoundDrv, MenuCore, Pathing, CbtMap, ClassCal, FxEngine, C_Effect, C_Race, C_Keys, C_Class, C_Status, C_Ifc,
-  C_Dir, C_Spell;
+uses Types, Crt, C_Npc, C_Terr, C_Save, C_Cond, GDConsts, GDVars, DaxIo,
+  TextRend, Border, CharHlp, SoundDrv, MenuCore, Pathing, CbtMap, ClassCal, FxEngine, C_Effect, C_Race, C_Keys, C_Class,
+  C_Status, C_Ifc, C_Dir, C_Spell;
 
 { Runs the spell-selection menu over spellList as GenerateSpellList built it, then frees the list. Scribing also sets
   castItem to the chosen spell's scroll.
@@ -80,10 +80,220 @@ procedure SpellRemoveCurse;
   GDVars.castTarget, and set redrawInventory. }
 procedure InitSpellFns;
 
+{ Bless: apply the spell to the caster's own team (see CastOneSide). }
+procedure SpellBless;
+
+{ Curse: apply the spell to the caster's enemies (see CastOneSide). }
+procedure SpellCurse;
+
+{ Cure Light Wounds: restore 1d8 hit points to the first target. }
+procedure SpellCureLightWounds;
+
+{ Cause Light Wounds: 1d8 damage, element mask 8. }
+procedure SpellCauseLightWounds;
+
+{ Shared handler for the detection-style spells: apply the spell's effect. }
+procedure SpellDetection;
+
+{ Shared handler for the protection spells: apply the spell's effect. }
+procedure SpellProtection;
+
+{ Resist Cold: apply the spell's effect. }
+procedure SpellResistCold;
+
+{ Burning Hands: caster-level damage, element mask 9. }
+procedure SpellBurningHands;
+
+{ Charm Person: only targets with charType 0..1 and icon size 1 can be charmed. The Charm effect's strength is the
+  caster's hostile * 128 + caster level; afterwards the target's first Charm effect (normally the one just added) has
+  its handler called with removed = False. }
+procedure SpellCharmPerson;
+
+{ Enlarge: set the first target's Strength from the caster level and add the Enlarge effect, which keeps the Strength
+  encoding AdjustForNewStrength returns. }
+procedure SpellEnlarge;
+
+{ Reduce: if spellTargets[1] fails a spell save, remove its Enlarge effect (12) }
+procedure SpellReduce;
+
+{ Friends: +2d4 Charisma, capped at 25; the effect's strength is the old Charisma, restored on removal }
+procedure SpellFriends;
+
+{ Magic Missile: (caster level div 2)d4 + caster level div 2 damage, element mask 8. }
+procedure SpellMagicMissile;
+
+{ Shield: apply the spell's effect. }
+procedure SpellShield;
+
+{ Shocking Grasp: 1d8 + caster level damage, element mask $C. }
+procedure SpellShockingGrasp;
+
+{ Sleep: a 4d4 hit-dice pool. Cost per target by levelHighest: 0..1 -> 1, 2 -> 2, 3 -> 4, 4 -> 6, 5 -> 10 for MONSTER
+  and 20 otherwise, higher -> 20. Animated dead (ANIMATED), targets already asleep (effect 53) and targets the remaining
+  pool cannot pay for are dropped; the pool is spent greedily in target order. }
+procedure SpellSleep;
+
+{ Hold Person (spells 23 and 49): save modifier -2 (cleric) or -3 (mage) for one target, -1 for two, 0 for three or
+  four. Targets are processed in reverse; each one after the first processed (i < spellTargetCount) gets its own
+  projectile animation. Targets with charType > 1 or icon size > 1 always save. }
+procedure SpellHold;
+
+{ Resist Fire: apply the spell's effect. }
+procedure SpellResistFire;
+
+{ Silence: apply the spell's effect. }
+procedure SpellSilence;
+
+{ Slow Poison: animated dead are skipped. A poisoned target (effect 55) has hpCur raised to at least 1, gets the spell's
+  effect at strength 255, runs the effect-78 (heal/wake) handler with removed = True, and gains effect 15 for 10 minutes
+  at strength 255. }
+procedure SpellSlowPoison;
+
+{ Snake Charm: rebuild the target list from GDVars.creatureList: snakes whose hpCur still fits in a pool equal to the
+  caster's hpCur, paid in list order }
+procedure SpellSnakeCharm;
+
+{ Spiritual Hammer: apply the spell's effect, then run the Spiritual Hammer effect handler for the first target. }
+procedure SpellSpiritualHammer;
+
+{ Invisibility: apply the spell's effect. }
+procedure SpellInvisibility;
+
+{ Knock: apply the spell's effect. }
+procedure SpellKnock;
+
+{ Mirror Image: apply the spell's effect with 1d4 images as its strength. }
+procedure SpellMirrorImage;
+
+{ Ray of Enfeeblement: apply the spell's effect. }
+procedure SpellRayOfEnfeeblement;
+
+{ Stinking Cloud: append a node to the stinkHead list and give the caster effect 40 for caster-level minutes at strength
+  caster level + myClouds * 16, where myClouds counts the caster's clouds among the nodes passed while walking to the
+  tail (the old tail node itself is not checked). The cloud covers the 2x2 block whose upper-left is the aim cell
+  (GDConsts.cloudDir: center, E, SE, S). Each cell records the terrain underneath (a cell already under another cloud
+  takes that cloud's saved terrain, a corpse cell the corpse's), and passable cells are stamped TERRAIN_STINK_CLOUD;
+  every creature found in the four cells then gets FxEngine.ConsiderTerrainEffects. }
+procedure SpellStinkingCloud;
+
+{ Strength: add 1d4 for a mage, 1d6 for a cleric or thief, 1d8 for a fighter; when several classes match, the last test
+  wins. Above 18, fighters turn each extra point into 10 points of exceptional Strength (capped at 100) and others are
+  held at 18. }
+procedure SpellStrength;
+
+{ Animate Dead: animate up to caster-level dead (DEAD_STATUS) human (charType 0) creatures whose cell is still a valid
+  location. Effect 32's strength is the old hostile * 16 + caster level. Each corpse joins the caster's team under
+  computer control (quickfight 1), becomes undead (charType 4, levelUndead 2, movementBase 6, attackLevel 0), loses its
+  memorized spells and gets the animated NPC or PC npc code; if ReviveDeadCreature succeeds at full hpMax it also gets
+  effect 32 and ANIMATED. }
+procedure SpellAnimateDead;
+
+{ Cure Blindness: remove the first target's blindness. }
+procedure SpellCureBlindness;
+
+{ Cause Blindness: apply the spell's effect. }
+procedure SpellCauseBlindness;
+
+{ Cure Disease: remove the first target's disease effects. }
+procedure SpellCureDisease;
+
+{ Cause Disease: apply the spell's effect. }
+procedure SpellCauseDisease;
+
+{ Dispel Magic: try every effect whose strength is below 255, with its low nibble as the effect's caster level: 50%, +5%
+  per caster level above it, -2% per level below. }
+procedure SpellDispelMagic;
+
+{ Prayer: apply the spell's effect at strength caster team * 16 + caster level. }
+procedure SpellPrayer;
+
+{ Bestow Curse: apply the spell's effect. }
+procedure SpellBestowCurse;
+
+{ Blink: apply the spell's effect. }
+procedure SpellBlink;
+
+{ Fireball: spell 64 (an item fireball) uses level 1d3 * 2 + 1. When zone0^.view3dFlag is 0 the target list is rebuilt
+  with Pathing.BuildTargetList, radius 2 around the aim cell. Damage is level d6, element mask 9. }
+procedure SpellFireball;
+
+{ Haste: the caster's team loses Slowed or is hasted (see HasteSlowLogic). }
+procedure SpellHaste;
+
+{ Lightning Bolt: caster-level d6 damage at the aim cell, then a bouncing bolt of 8 cells. }
+procedure SpellLightningBolt;
+
+{ Slow: the caster's enemies lose Hasted or are slowed (see HasteSlowLogic). }
+procedure SpellSlow;
+
+{ Restoration: give back one drained level. hpMax, hpCur and hpRolled regain drainedHps div drainedLevels. Scanning
+  classes 0..7, a class becomes the pick when its level is not above the current pick's, its next-level XP is nonzero
+  and smaller, and it is not at its level cap. The pick gains a level and experience is raised to its next-level XP if
+  lower. }
+procedure SpellRestoration;
+
+{ Potion of Speed: remove Slowed, or else apply the potion's effect. }
+procedure SpellPotionOfSpeed;
+
+{ Keoghtom's Ointment: cure poison (also removing effect 22 silently), else cure disease, else heal 1d4 + 8 }
+procedure SpellKeoghtomsOintment;
+
+{ Giant Strength: raise Strength to 21 and add the Strength effect, which keeps the Strength encoding
+  AdjustForNewStrength returns. }
+procedure SpellGiantStrength;
+
+{ Javelin of Lightning: 1d6 + 20 damage at the aim cell, then a 3-cell bolt of 20 damage. }
+procedure SpellJavelinOfLightning;
+
+{ Wand of Paralyzation: apply the item's effect. }
+procedure SpellWandOfParalyzation;
+
+{ Potion of Healing: restore 2d4 + 2 hit points. }
+procedure SpellPotionOfHealing;
+
+{ Dust of Disappearance: apply the item's effect. }
+procedure SpellDustOfDisappearance;
+
+{ Wand of Magic Missiles: 2d4 + 2 damage, element mask 8. }
+procedure SpellWandOfMagicMissiles;
+
+{ Unused item spell slot: does nothing. }
+procedure SpellNoEffect;
+
+{ Manual of Bodily Health: apply the item's effect at strength 255. }
+procedure SpellManualOfBodilyHealth;
+
+{ Breathes a bronze dragon's lightning, as the handler of its breath effect. After the first round it holds its breath
+  half the time. Otherwise the cast-target handler picks an aim for Lightning Bolt with automatic targeting, and the aim
+  becomes one step from the dragon toward it, plus one more step on each axis where that step is +1. A bolt of the
+  dragon's maximum hit points of damage (save against breath) hits that cell and runs 10 cells. The charges are the
+  effect's strength: 255 and 254 count down, anything lower removes the effect.
+  @param(creature The dragon.)
+  @param(p The breath effect's node.)
+  @param(removed Unused.) }
+procedure EffBreatheLightning(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
+
 implementation
 
-type
-  TSleepTier = (SleepTier0, SleepTier1, SleepTier2, SleepTier3, SleepTier4, SleepTier5);
+procedure AddSpellToList(spell: Byte); forward;
+
+procedure AddScrollSpells(forScribe: Boolean); forward;
+
+procedure AddAllScrollSpells(forScribe: Boolean); forward;
+
+function CalcSpellDuration(spell: Byte): Word; forward;
+
+procedure ResolveSpell(spell, eff: Byte; onRemove: Boolean; damage, elem: Byte; msg: Types.TStr40); forward;
+
+procedure CastOneSide(hostFlag: ShortInt; msg: Types.TStr40); forward;
+
+function RemoveDiseaseEffects: Boolean; forward;
+
+procedure HasteSlowLogic(removeId: Byte; hostFlag: ShortInt; msg: Types.TStr40); forward;
+
+procedure LightningAttackAt(x, y: ShortInt; damage: Byte; saveType: ShortInt; var blocked: Boolean); forward;
+
+procedure LightningPath(boltLen, damage: Byte; saveType: ShortInt; bounce: Boolean); forward;
 
 function SpellSelection(selType: Byte; var idx: Integer): Byte;
 var
@@ -507,19 +717,16 @@ begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, msg);
 end;
 
-{ Bless: apply the spell to the caster's own team (see CastOneSide). }
 procedure SpellBless;
 begin
   Magic.CastOneSide(GDVars.curChar^.hostile, 'is Blessed');
 end;
 
-{ Curse: apply the spell to the caster's enemies (see CastOneSide). }
 procedure SpellCurse;
 begin
   Magic.CastOneSide(CharHlp.EnemyTeam(GDVars.curChar), 'is Cursed');
 end;
 
-{ Cure Light Wounds: restore 1d8 hit points to the first target. }
 procedure SpellCureLightWounds;
 begin
   if GDVars.spellTargetCount = 0 then
@@ -528,40 +735,32 @@ begin
     CharHlp.AnnounceHealStatus(GDVars.spellTargets[1]);
 end;
 
-{ Cause Light Wounds: 1d8 damage, element mask 8. }
 procedure SpellCauseLightWounds;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, FxEngine.RollDamageDice(1, 8), 8, '');
 end;
 
-{ Shared handler for the detection-style spells: apply the spell's effect. }
 procedure SpellDetection;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is affected');
 end;
 
-{ Shared handler for the protection spells: apply the spell's effect. }
 procedure SpellProtection;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is protected');
 end;
 
-{ Resist Cold: apply the spell's effect. }
 procedure SpellResistCold;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is cold-resistant');
 end;
 
-{ Burning Hands: caster-level damage, element mask 9. }
 procedure SpellBurningHands;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, CharHlp.GetCasterLevel(GDVars.curSpell), 9,
                       '');
 end;
 
-{ Charm Person: only targets with charType 0..1 and icon size 1 can be charmed. The Charm effect's strength is the
-  caster's hostile * 128 + caster level; afterwards the target's first Charm effect (normally the one just added) has
-  its handler called with removed = False. }
 procedure SpellCharmPerson;
 var
   effect: Types.PEffectRec;
@@ -579,8 +778,6 @@ begin
   end;
 end;
 
-{ Enlarge: set the first target's Strength from the caster level and add the Enlarge effect, which keeps the Strength
-  encoding AdjustForNewStrength returns. }
 procedure SpellEnlarge;
 var
   enc: Byte;
@@ -603,7 +800,6 @@ begin
                      Magic.CalcSpellDuration(GDVars.curSpell), enc, True);
 end;
 
-{ Reduce: if spellTargets[1] fails a spell save, remove its Enlarge effect (12) }
 procedure SpellReduce;
 begin
   if GDVars.spellTargetCount > 0 then
@@ -612,7 +808,6 @@ begin
         CharHlp.PrintCreatureMessage(GDVars.spellTargets[1], 'has been reduced', 10, True);
 end;
 
-{ Friends: +2d4 Charisma, capped at 25; the effect's strength is the old Charisma, restored on removal }
 procedure SpellFriends;
 var
   oldCha: Byte;
@@ -625,7 +820,6 @@ begin
   Magic.ResolveSpell(GDVars.curSpell, oldCha, True, 0, 0, 'is friendly');
 end;
 
-{ Magic Missile: (caster level div 2)d4 + caster level div 2 damage, element mask 8. }
 procedure SpellMagicMissile;
 var
   cl: Byte;
@@ -634,22 +828,17 @@ begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, cl div 2 + FxEngine.RollDamageDice(cl div 2, 4), 8, '');
 end;
 
-{ Shield: apply the spell's effect. }
 procedure SpellShield;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is shielded');
 end;
 
-{ Shocking Grasp: 1d8 + caster level damage, element mask $C. }
 procedure SpellShockingGrasp;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False,
                       FxEngine.RollDamageDice(1, 8) + CharHlp.GetCasterLevel(GDVars.curSpell), $C, '');
 end;
 
-{ Sleep: a 4d4 hit-dice pool. Cost per target by levelHighest: 0..1 -> 1, 2 -> 2, 3 -> 4, 4 -> 6, 5 -> 10 for MONSTER
-  and 20 otherwise, higher -> 20. Animated dead (ANIMATED), targets already asleep (effect 53) and targets the remaining
-  pool cannot pay for are dropped; the pool is spent greedily in target order. }
 procedure SpellSleep;
 var
   i: Byte;
@@ -658,12 +847,12 @@ begin
   GDVars.multiTarget := 1;
   GDVars.spellScratch := FxEngine.RollDice(4, 4);
   for i := 1 to GDVars.spellTargetCount do begin
-    case TSleepTier(GDVars.spellTargets[i]^.levelHighest) of
-      SleepTier0..SleepTier1: GDVars.spellScratch2 := 1;
-      SleepTier2: GDVars.spellScratch2 := 2;
-      SleepTier3: GDVars.spellScratch2 := 4;
-      SleepTier4: GDVars.spellScratch2 := 6;
-      SleepTier5: if GDVars.spellTargets[i]^.race = C_Race.MONSTER then
+    case GDVars.spellTargets[i]^.levelHighest of
+      0..1: GDVars.spellScratch2 := 1;
+      2: GDVars.spellScratch2 := 2;
+      3: GDVars.spellScratch2 := 4;
+      4: GDVars.spellScratch2 := 6;
+      5: if GDVars.spellTargets[i]^.race = C_Race.MONSTER then
               GDVars.spellScratch2 := 10
             else
               GDVars.spellScratch2 := 20;
@@ -680,9 +869,6 @@ begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'falls asleep');
 end;
 
-{ Hold Person (spells 23 and 49): save modifier -2 (cleric) or -3 (mage) for one target, -1 for two, 0 for three or
-  four. Targets are processed in reverse; each one after the first processed (i < spellTargetCount) gets its own
-  projectile animation. Targets with charType > 1 or icon size > 1 always save. }
 procedure SpellHold;
 var
   tgt: Types.PCharRecord;
@@ -721,21 +907,16 @@ begin
   end;
 end;
 
-{ Resist Fire: apply the spell's effect. }
 procedure SpellResistFire;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is fire resistant');
 end;
 
-{ Silence: apply the spell's effect. }
 procedure SpellSilence;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is silenced');
 end;
 
-{ Slow Poison: animated dead are skipped. A poisoned target (effect 55) has hpCur raised to at least 1, gets the spell's
-  effect at strength 255, runs the effect-78 (heal/wake) handler with removed = True, and gains effect 15 for 10 minutes
-  at strength 255. }
 procedure SpellSlowPoison;
 var
   effect: Types.PEffectRec;
@@ -753,8 +934,6 @@ begin
   end;
 end;
 
-{ Snake Charm: rebuild the target list from GDVars.creatureList: snakes whose hpCur still fits in a pool equal to the
-  caster's hpCur, paid in list order }
 procedure SpellSnakeCharm;
 var
   p: Types.PCharRecord;
@@ -775,43 +954,32 @@ begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is charmed');
 end;
 
-{ Spiritual Hammer: apply the spell's effect, then run the Spiritual Hammer effect handler for the first target. }
 procedure SpellSpiritualHammer;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, True, 0, 0, '');
   FxEngine.CallEffectHandler(C_Effect.SPIRITUAL_HAMMER, GDVars.spellTargets[1], nil, False);
 end;
 
-{ Invisibility: apply the spell's effect. }
 procedure SpellInvisibility;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is invisible');
 end;
 
-{ Knock: apply the spell's effect. }
 procedure SpellKnock;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'Knock-Knock');
 end;
 
-{ Mirror Image: apply the spell's effect with 1d4 images as its strength. }
 procedure SpellMirrorImage;
 begin
   Magic.ResolveSpell(GDVars.curSpell, FxEngine.RollDice(1, 4), False, 0, 0, 'is duplicated');
 end;
 
-{ Ray of Enfeeblement: apply the spell's effect. }
 procedure SpellRayOfEnfeeblement;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is weakened');
 end;
 
-{ Stinking Cloud: append a node to the stinkHead list and give the caster effect 40 for caster-level minutes at strength
-  caster level + myClouds * 16, where myClouds counts the caster's clouds among the nodes passed while walking to the
-  tail (the old tail node itself is not checked). The cloud covers the 2x2 block whose upper-left is the aim cell
-  (GDConsts.cloudDir: center, E, SE, S). Each cell records the terrain underneath (a cell already under another cloud
-  takes that cloud's saved terrain, a corpse cell the corpse's), and passable cells are stamped TERRAIN_STINK_CLOUD;
-  every creature found in the four cells then gets FxEngine.ConsiderTerrainEffects. }
 procedure SpellStinkingCloud;
 var
   otherCloud: Types.PStinkRec;
@@ -886,9 +1054,6 @@ begin
       FxEngine.ConsiderTerrainEffects(GDVars.creatureArr[crIdx[k]]);
 end;
 
-{ Strength: add 1d4 for a mage, 1d6 for a cleric or thief, 1d8 for a fighter; when several classes match, the last test
-  wins. Above 18, fighters turn each extra point into 10 points of exceptional Strength (capped at 100) and others are
-  held at 18. }
 procedure SpellStrength;
 var
   tgt: Types.PCharRecord;
@@ -923,11 +1088,6 @@ begin
   FxEngine.AddEffect(tgt, C_Effect.STRENGTH, Magic.CalcSpellDuration(GDVars.curSpell), enc, True);
 end;
 
-{ Animate Dead: animate up to caster-level dead (DEAD_STATUS) human (charType 0) creatures whose cell is still a valid
-  location. Effect 32's strength is the old hostile * 16 + caster level. Each corpse joins the caster's team under
-  computer control (quickfight 1), becomes undead (charType 4, levelUndead 2, movementBase 6, attackLevel 0), loses its
-  memorized spells and gets the animated NPC or PC npc code; if ReviveDeadCreature succeeds at full hpMax it also gets
-  effect 32 and ANIMATED. }
 procedure SpellAnimateDead;
 var
   i: Byte;
@@ -972,14 +1132,12 @@ begin
   end;
 end;
 
-{ Cure Blindness: remove the first target's blindness. }
 procedure SpellCureBlindness;
 begin
   if FxEngine.RemoveEffectWithMessage(GDVars.spellTargets[1], C_Effect.BLIND) then
     CharHlp.PrintNameStringAnim(GDVars.spellTargets[1], True, 'can see');
 end;
 
-{ Cause Blindness: apply the spell's effect. }
 procedure SpellCauseBlindness;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is blind');
@@ -1006,7 +1164,6 @@ begin
   GDVars.effectLock := 0;
 end;
 
-{ Cure Disease: remove the first target's disease effects. }
 procedure SpellCureDisease;
 var
   { Unused in this version; see the other implementations of this routine. }
@@ -1015,14 +1172,11 @@ begin
   cured := Magic.RemoveDiseaseEffects;
 end;
 
-{ Cause Disease: apply the spell's effect. }
 procedure SpellCauseDisease;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, True, 0, 0, 'is diseased');
 end;
 
-{ Dispel Magic: try every effect whose strength is below 255, with its low nibble as the effect's caster level: 50%, +5%
-  per caster level above it, -2% per level below. }
 procedure SpellDispelMagic;
 var
   i: Byte;
@@ -1062,7 +1216,6 @@ begin
   end;
 end;
 
-{ Prayer: apply the spell's effect at strength caster team * 16 + caster level. }
 procedure SpellPrayer;
 begin
   Magic.ResolveSpell(GDVars.curSpell,
@@ -1092,20 +1245,16 @@ begin
   end;
 end;
 
-{ Bestow Curse: apply the spell's effect. }
 procedure SpellBestowCurse;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'has been cursed!');
 end;
 
-{ Blink: apply the spell's effect. }
 procedure SpellBlink;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is blinking');
 end;
 
-{ Fireball: spell 64 (an item fireball) uses level 1d3 * 2 + 1. When zone0^.view3dFlag is 0 the target list is rebuilt
-  with Pathing.BuildTargetList, radius 2 around the aim cell. Damage is level d6, element mask 9. }
 procedure SpellFireball;
 var
   cl: Byte;
@@ -1153,7 +1302,6 @@ begin
       FxEngine.TriggerEffectsWithCondition(C_Cond.MOVE_ATTACK_RATE, GDVars.spellTargets[i]);
 end;
 
-{ Haste: the caster's team loses Slowed or is hasted (see HasteSlowLogic). }
 procedure SpellHaste;
 begin
   Magic.HasteSlowLogic(C_Effect.SLOWED, GDVars.curChar^.hostile, 'is Hasted');
@@ -1270,7 +1418,6 @@ begin
   GDVars.multiTarget := 0;
 end;
 
-{ Lightning Bolt: caster-level d6 damage at the aim cell, then a bouncing bolt of 8 cells. }
 procedure SpellLightningBolt;
 var
   dmg: Byte;
@@ -1281,16 +1428,11 @@ begin
   Magic.LightningPath(8, dmg, C_Save.SPELL, True);
 end;
 
-{ Slow: the caster's enemies lose Hasted or are slowed (see HasteSlowLogic). }
 procedure SpellSlow;
 begin
   Magic.HasteSlowLogic(C_Effect.HASTED, CharHlp.EnemyTeam(GDVars.curChar), 'is Slowed');
 end;
 
-{ Restoration: give back one drained level. hpMax, hpCur and hpRolled regain drainedHps div drainedLevels. Scanning
-  classes 0..7, a class becomes the pick when its level is not above the current pick's, its next-level XP is nonzero
-  and smaller, and it is not at its level cap. The pick gains a level and experience is raised to its next-level XP if
-  lower. }
 procedure SpellRestoration;
 var
   tgt: Types.PCharRecord;
@@ -1333,14 +1475,12 @@ begin
   end;
 end;
 
-{ Potion of Speed: remove Slowed, or else apply the potion's effect. }
 procedure SpellPotionOfSpeed;
 begin
   if not FxEngine.RemoveEffectWithMessage(GDVars.spellTargets[1], C_Effect.SLOWED) then
     Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is Speedy');
 end;
 
-{ Keoghtom's Ointment: cure poison (also removing effect 22 silently), else cure disease, else heal 1d4 + 8 }
 procedure SpellKeoghtomsOintment;
 var
   { Unused in this version; see the other implementations of this routine. }
@@ -1357,8 +1497,6 @@ begin
   end;
 end;
 
-{ Giant Strength: raise Strength to 21 and add the Strength effect, which keeps the Strength encoding
-  AdjustForNewStrength returns. }
 procedure SpellGiantStrength;
 var
   enc: Byte;
@@ -1369,7 +1507,6 @@ begin
                      Magic.CalcSpellDuration(GDVars.curSpell), enc, True);
 end;
 
-{ Javelin of Lightning: 1d6 + 20 damage at the aim cell, then a 3-cell bolt of 20 damage. }
 procedure SpellJavelinOfLightning;
 var
   blocked: Boolean;
@@ -1378,50 +1515,36 @@ begin
   Magic.LightningPath(3, 20, C_Save.SPELL, False);
 end;
 
-{ Wand of Paralyzation: apply the item's effect. }
 procedure SpellWandOfParalyzation;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is paralyzed');
 end;
 
-{ Potion of Healing: restore 2d4 + 2 hit points. }
 procedure SpellPotionOfHealing;
 begin
   if FxEngine.RestoreHitPoints(GDVars.spellTargets[1], FxEngine.RollDice(2, 4) + 2, False) then
     CharHlp.PrintNameStringAnim(GDVars.spellTargets[1], True, 'is Healed');
 end;
 
-{ Dust of Disappearance: apply the item's effect. }
 procedure SpellDustOfDisappearance;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is invisible');
 end;
 
-{ Wand of Magic Missiles: 2d4 + 2 damage, element mask 8. }
 procedure SpellWandOfMagicMissiles;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, FxEngine.RollDamageDice(2, 4) + 2, 8, '');
 end;
 
-{ Unused item spell slot: does nothing. }
 procedure SpellNoEffect;
 begin
 end;
 
-{ Manual of Bodily Health: apply the item's effect at strength 255. }
 procedure SpellManualOfBodilyHealth;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 255, True, 0, 0, 'is Reading');
 end;
 
-{ Breathes a bronze dragon's lightning, as the handler of its breath effect. After the first round it holds its breath
-  half the time. Otherwise the cast-target handler picks an aim for Lightning Bolt with automatic targeting, and the aim
-  becomes one step from the dragon toward it, plus one more step on each axis where that step is +1. A bolt of the
-  dragon's maximum hit points of damage (save against breath) hits that cell and runs 10 cells. The charges are the
-  effect's strength: 255 and 254 count down, anything lower removes the effect.
-  @param(creature The dragon.)
-  @param(p The breath effect's node.)
-  @param(removed Unused.) }
 procedure EffBreatheLightning(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   blocked: Boolean;
@@ -1493,7 +1616,7 @@ begin
   end else begin
     Border.ClearBox(1, 18, 38, 22);
     CharHlp.DisplayCreatureName(creature, 1, 19, False);
-    TextRend.DisplayString(Length(creature^.name) + 1 + 1, 19, LightGreen, msg);
+    TextRend.DisplayString(Length(creature^.name) + 2, 19, LightGreen, msg);
     TextRend.DisplayString(1, 20, LightGreen, GDConsts.spellNames[spell]);
     TextRend.PauseOnly;
     CharHlp.ClearMessageWindow;

@@ -10,16 +10,16 @@ uses Types, C_Video, C_Ega, GDConsts, GDVars, DaxIo, Crt, Dos, GameIo, C_Keys;
   the four planes. }
 procedure ResetEgaGc;
 
-{ Shows an EGA page (video BIOS function 5) and records its segment as the current page.
+{ Shows an EGA page (video BIOS function 5) and points egaCurPage at its segment.
   @param(page The page to show.) }
 procedure SetupEgaCurrentPage(page: Byte);
 
-{ Records an EGA page's segment as the other page.
+{ Points egaOtherPage at the segment of an EGA page.
   @param(page The page.) }
 procedure SetupEgaOtherPage(page: Byte);
 
 { Fills a character-cell rectangle of an EGA page with one color in write mode 2, then restores write mode 0 and points
-  the other page back at the page number saved for it.
+  egaOtherPage back at the other page (pageNum).
   @param(ulCol Left column.)
   @param(ulRow Top row.)
   @param(lrCol Right column.)

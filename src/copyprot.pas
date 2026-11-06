@@ -4,7 +4,7 @@ unit CopyProt;
 
 interface
 
-uses Types, GDConsts, GDVars, Crt, GameIo, TextRend, Border, C_Rune;
+uses Types, GDConsts, GDVars, Crt, TextRend, Border, C_Rune, GameIo;
 
 { Give up to three attempts, each with a randomly chosen wheel entry. Return on a correct code word; exit the game after
   the third wrong answer. }

@@ -96,7 +96,7 @@ procedure DecompressDaxBuffer(var src, dst: Types.PByteArr; var lenCompressed, l
   @param(dataFile Receives the handle placed at the data area.)
   @param(dirFile Receives the handle placed at the directory.)
   @returns(True when the archive was opened.) }
-function OpenDax(dirName, ext: TStr20; var headerSize: Word; var dataFile, dirFile: file): Boolean;
+function OpenDax(dirName, ext: Types.TStr40; var headerSize: Word; var dataFile, dirFile: file): Boolean;
 
 { Closes both handles of a DAX archive.
   @param(dataFile The data handle.)
@@ -284,8 +284,7 @@ begin
   until srcIdx >= lenCompressed;
 end;
 
-{$I-}
-function OpenDax(dirName, ext: TStr20; var headerSize: Word; var dataFile, dirFile: file): Boolean;
+function OpenDax(dirName, ext: Types.TStr40; var headerSize: Word; var dataFile, dirFile: file): Boolean;
 var nread: Word;
 begin
   if DaxIo.OpenWithRetry(dirName + ext, GDConsts.insertDiskMsg[GDVars.virtualDisk] + GDVars.gameDir[1] + ':',

@@ -12,7 +12,7 @@ const
   dsCoinValuationCopper: array[C_Money.MONEY_COPPER..C_Money.MONEY_PLATINUM] of LongInt = (
     1, 10, 100, 200, 1000);
   { Class names, indexed by TCharRecord.charClass. }
-  classNames: array[C_Class.CLASS_CLERIC..C_Class.CLASS_MAGE_THIEF] of Types.TStr26 = (
+  classNames: array[C_Class.CLASS_CLERIC..C_Class.CLASS_MAGE_THIEF] of string[26] = (
     'Cleric',
     'Druid',
     'Fighter',
@@ -31,7 +31,7 @@ const
     'Fighter/Magic-User/Thief',
     'Magic-User/Thief');
   { Race names, indexed by TCharRecord.race. }
-  raceNames: array[C_Race.RACE_MONSTER..C_Race.RACE_HUMAN] of Types.TStr9 = (
+  raceNames: array[C_Race.RACE_MONSTER..C_Race.RACE_HUMAN] of string[9] = (
     'Monster',
     'Dwarf',
     'Elf',
@@ -41,7 +41,7 @@ const
     'Half-Orc',
     'Human');
   { Alignment names, indexed by TCharRecord.alignment. }
-  alignNames: array[C_Align.ALIGN_LAWFUL_GOOD..C_Align.ALIGN_CHAOTIC_EVIL] of Types.TStr16 = (
+  alignNames: array[C_Align.ALIGN_LAWFUL_GOOD..C_Align.ALIGN_CHAOTIC_EVIL] of string[16] = (
     'Lawful Good',
     'Lawful Neutral',
     'Lawful Evil',
@@ -52,11 +52,11 @@ const
     'Chaotic Neutral',
     'Chaotic Evil');
   { Gender names, indexed by TCharRecord.gender. }
-  genderNames: array[C_Gender.GENDER_MALE..C_Gender.GENDER_FEMALE] of Types.TStr6 = (
+  genderNames: array[C_Gender.GENDER_MALE..C_Gender.GENDER_FEMALE] of string[6] = (
     'Male',
     'Female');
   { Money names, indexed like TCharRecord.coins and TMoney. }
-  moneyNames: array[C_Money.MONEY_COPPER..C_Money.MONEY_JEWELRY] of Types.TStr10 = (
+  moneyNames: array[C_Money.MONEY_COPPER..C_Money.MONEY_JEWELRY] of string[10] = (
     'Copper',
     'Silver',
     'Electrum',
@@ -65,7 +65,7 @@ const
     'Gems',
     'Jewelry');
   { Status names, indexed by TCharRecord.status; see the STATUS_ constants. }
-  statusStrs: array[C_Status.STATUS_OKAY..C_Status.STATUS_GONE] of Types.TStr12 = (
+  statusStrs: array[C_Status.STATUS_OKAY..C_Status.STATUS_GONE] of string[12] = (
     'Okay',
     'Animated',
     'tempgone',
@@ -352,7 +352,38 @@ const
     $0000, $5555, $AAAA, $FFFF);
   { EGA-to-CGA font color map. }
   attrTable: array[0..15] of Byte = (
-    0, 0, 0, 1, 2, 2, 2, 3, 3, 1, 1, 1, 2, 2, 3, 3);
+    { EGA 0 Black -> CGA colour 0 }
+    0,
+    { EGA 1 Blue -> CGA colour 0 }
+    0,
+    { EGA 2 Green -> CGA colour 0 }
+    0,
+    { EGA 3 Cyan -> CGA colour 1 }
+    1,
+    { EGA 4 Red -> CGA colour 2 }
+    2,
+    { EGA 5 Magenta -> CGA colour 2 }
+    2,
+    { EGA 6 Brown -> CGA colour 2 }
+    2,
+    { EGA 7 LightGray -> CGA colour 3 }
+    3,
+    { EGA 8 DarkGray -> CGA colour 3 }
+    3,
+    { EGA 9 LightBlue -> CGA colour 1 }
+    1,
+    { EGA 10 LightGreen -> CGA colour 1 }
+    1,
+    { EGA 11 LightCyan -> CGA colour 1 }
+    1,
+    { EGA 12 LightRed -> CGA colour 2 }
+    2,
+    { EGA 13 LightMagenta -> CGA colour 2 }
+    2,
+    { EGA 14 Yellow -> CGA colour 3 }
+    3,
+    { EGA 15 White -> CGA colour 3 }
+    3);
   { One mask per 2-bit pixel position within a CGA pixel word, high pair first. Blit uses them to isolate, place and
     reflect CGA pixels; TextRend.RenderChar uses them to draw characters. }
   cgaPixelMask: array[0..7] of Word = (
@@ -371,7 +402,22 @@ const
   { Packed EGA-to-CGA color map, two EGA colors per byte, used by Blit.FillPicRect for the CharGen icon previews and the
     View3D backgrounds }
   dsIconColorMap: Types.TColorMap = (
-    $00, $11, $22, $12, $00, $21, $30, $33);
+    { EGA 0 Black -> CGA 0; EGA 1 Blue -> CGA 0 }
+    $00,
+    { EGA 2 Green -> CGA 1; EGA 3 Cyan -> CGA 1 }
+    $11,
+    { EGA 4 Red -> CGA 2; EGA 5 Magenta -> CGA 2 }
+    $22,
+    { EGA 6 Brown -> CGA 1; EGA 7 LightGray -> CGA 2 }
+    $12,
+    { EGA 8 DarkGray -> CGA 0; EGA 9 LightBlue -> CGA 0 }
+    $00,
+    { EGA 10 LightGreen -> CGA 2; EGA 11 LightCyan -> CGA 1 }
+    $21,
+    { EGA 12 LightRed -> CGA 3; EGA 13 LightMagenta -> CGA 0 }
+    $30,
+    { EGA 14 Yellow -> CGA 3; EGA 15 White -> CGA 3 }
+    $33);
 
 const
   { Sound command tables }
@@ -401,6 +447,8 @@ const
 
 var
   { Play session }
+  { nonzero makes HeapErr force a save; never set }
+  heapFailureSaveEnabled: Byte;
   { GameBoot writes 0/1, Intro tests zero }
   fullIntro: Byte;
   { word bank }

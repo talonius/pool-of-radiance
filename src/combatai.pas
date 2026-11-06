@@ -1,12 +1,12 @@
 { Combat AI: movement, equipment, spell selection, morale and automatic actions. }
+
 {$O+,F+}
 unit CombatAi;
 
 interface
 
-uses Types, C_Item, C_Npc, C_Terr, C_Cond, GDConsts, GDVars, Crt, TextRend, GameIo, CharHlp,
-  MenuCore, Pathing, CbtMap, CbtActs, ViewChar, Magic, FxEngine, C_Effect, C_Equip, C_Class, C_Status, C_Gbvm, C_Dir,
-  C_Spell, C_Keys;
+uses Types, C_Item, C_Npc, C_Terr, C_Cond, GDConsts, GDVars, Crt, MenuCore, CbtActs, ViewChar, FxEngine, C_Effect,
+  C_Equip, C_Class, C_Status, C_Gbvm, C_Dir, C_Spell, C_Keys, CharHlp, Magic, Pathing, CbtMap, TextRend, GameIo;
 
 { Runs one AI-controlled turn: checks the keyboard (space returns the party to manual control), rerolls the approach
   pattern, checks morale, then tries in order an item's spell, a spell readied earlier, turning undead and a new spell,
@@ -15,64 +15,31 @@ uses Types, C_Item, C_Npc, C_Terr, C_Cond, GDConsts, GDVars, Crt, TextRend, Game
   @param(creature The creature.) }
 procedure CombatAiControl(creature: Types.PCharRecord);
 
-{ Turns undead when the creature is a cleric that has not tried this battle and a turnable undead target exists.
-  @param(creature The creature.)
-  @returns(True when it turned undead.) }
-function TurnUndeadAi(creature: Types.PCharRecord): Boolean;
-
-{ Uses an equipped item's spell when the creature may use items, an enemy team remains and there is no antimagic. Over
-  1d7 passes the lowest AI priority accepted falls from 7, and the first equipped item that is not readable, has a
-  special below $80 and a spell DecideCastSpell accepts is used. Item effects above 56 map to the spell entries 23
-  lower.
-  @param(creature The creature.)
-  @returns(True when an item was used.) }
-function SelectItemToUse(creature: Types.PCharRecord): Boolean;
-
-{ Chooses and casts a spell for an NPC, or for a party member while quick magic is on, when an enemy team remains and
-  the creature may cast. The choice is among its memorized spells, those still being memorized included. Over 1d7 passes
-  the lowest AI priority accepted falls from 7, with three random picks a pass; the first spell DecideCastSpell accepts
-  is cast.
-  @param(creature The creature.)
-  @returns(The casting's result: True when the creature's actions are over.) }
-function SelectSpellToCast(creature: Types.PCharRecord): Boolean;
-
-{ Runs the AI's move-and-attack loop: a fleeing creature spends its movement; otherwise it attacks a target within its
-  weapon's range, re-equips when it holds a missile weapon with an enemy beside it, or moves toward a target. The loop
-  gives up after 20 passes. Note: the locked target can be nil and is read before the check for nil.
-  @param(creature The creature.)
-  @returns(True when the creature can no longer act.) }
-function AiMoveAttack(creature: Types.PCharRecord): Boolean;
-
-{ Ends a creature's round: a helpless creature, one with a ranged weapon or one out of initiative ends its actions, any
-  other guards.
-  @param(creature The creature.)
-  @returns(True.) }
-function FinishRound(creature: Types.PCharRecord): Boolean;
-
-{ Handles a key pressed during an AI turn: Alt-M toggles quick magic, space returns each creature that is neither an NPC
-  nor animated to manual control, and Alt-X tries the STING cheat. Pending keys are discarded afterwards. Note: the key
-  is tested whether or not the extended-key prefix came first, so an unprefixed 2 also toggles quick magic and an
-  unprefixed hyphen also tries the cheat.
-  @param(creature The creature.)
-  @returns(True when space put the creature itself back under manual control, which marks it to act again at once.) }
-function CheckKeystroke(creature: Types.PCharRecord): Boolean;
-
-{ Checks a creature's morale against the hit points it has lost and then, for hostiles, against the group's remaining
-  hit points; effects adjust the morale for each check. A failed check makes it flee when it is twice as fast as each
-  enemy, and otherwise surrender when its Intelligence is 6 or more. A turned creature flees, and party members never
-  check.
-  @param(creature The creature.)
-  @returns(True when the creature surrendered.) }
-function CheckMorale(creature: Types.PCharRecord): Boolean;
-
-{ Re-equips a creature with its best usable weapon (CalcWeaponPriority; its unarmed damage sets the bar for melee) and
-  its best shield (plus + 1). The ranged pick wins when it scores above half the melee score, has ammunition, and is a
-  true ranged weapon or no enemy is beside the creature. Cursed items are never swapped out; with too many hands in use
-  the shield, or else the weapon, is unreadied. The creature's information is redrawn when anything changed.
-  @param(creature The creature.) }
-procedure EquipWeaponAndArmor(creature: Types.PCharRecord);
-
 implementation
+
+function TurnUndeadAi(creature: Types.PCharRecord): Boolean; forward;
+
+function DecideCastSpell(creature: Types.PCharRecord; spell, minPri: Byte): Boolean; forward;
+
+function SelectItemToUse(creature: Types.PCharRecord): Boolean; forward;
+
+function SelectSpellToCast(creature: Types.PCharRecord): Boolean; forward;
+
+function AiCanStep(creature: Types.PCharRecord; attempt, baseDir: Byte; var edge: Boolean): Boolean; forward;
+
+procedure AiMoveStep(creature: Types.PCharRecord); forward;
+
+function AiMoveAttack(creature: Types.PCharRecord): Boolean; forward;
+
+function FinishRound(creature: Types.PCharRecord): Boolean; forward;
+
+function CheckKeystroke(creature: Types.PCharRecord): Boolean; forward;
+
+function CheckMorale(creature: Types.PCharRecord): Boolean; forward;
+
+function CalcWeaponPriority(creature: Types.PCharRecord; item: Types.PItemRec): Byte; forward;
+
+procedure EquipWeaponAndArmor(creature: Types.PCharRecord); forward;
 
 procedure CombatAiControl(creature: Types.PCharRecord);
 var
@@ -123,6 +90,9 @@ begin
   end;
 end;
 
+{ Turns undead when the creature is a cleric that has not tried this battle and a turnable undead target exists.
+  @param(creature The creature.)
+  @returns(True when it turned undead.) }
 function TurnUndeadAi(creature: Types.PCharRecord): Boolean;
 var
   tgt: Pointer;
@@ -187,6 +157,12 @@ begin
   end;
 end;
 
+{ Uses an equipped item's spell when the creature may use items, an enemy team remains and there is no antimagic. Over
+  1d7 passes the lowest AI priority accepted falls from 7, and the first equipped item that is not readable, has a
+  special below $80 and a spell DecideCastSpell accepts is used. Item effects above 56 map to the spell entries 23
+  lower.
+  @param(creature The creature.)
+  @returns(True when an item was used.) }
 function SelectItemToUse(creature: Types.PCharRecord): Boolean;
 var
   lowPri: Byte;
@@ -235,6 +211,12 @@ begin
   end;
 end;
 
+{ Chooses and casts a spell for an NPC, or for a party member while quick magic is on, when an enemy team remains and
+  the creature may cast. The choice is among its memorized spells, those still being memorized included. Over 1d7 passes
+  the lowest AI priority accepted falls from 7, with three random picks a pass; the first spell DecideCastSpell accepts
+  is cast.
+  @param(creature The creature.)
+  @returns(The casting's result: True when the creature's actions are over.) }
 function SelectSpellToCast(creature: Types.PCharRecord): Boolean;
 var
   list: array[0..20] of Byte;
@@ -252,8 +234,7 @@ var
 begin
   count := 0;
   if creature^.combatAddr^.castAllowed <> 0 then
-    { 20 is the last index of memorizedSpells }
-    for k := 0 to 20 do
+    for k := 0 to SizeOf(creature^.memorizedSpells) div SizeOf(creature^.memorizedSpells[0]) - 1 do
       if creature^.memorizedSpells[k] > 0 then begin
         list[count] := creature^.memorizedSpells[k];
         Inc(count);
@@ -363,7 +344,7 @@ begin
       creature^.combatAddr^.aiStance := FxEngine.RollDice(1, 2);
       { Hostiles flee along the party's facing (C_Dir 0, 2, 4, 6). Note: north gives 7 (NW) and south gives 3 (SE), so
         the result is not always a cardinal direction. }
-      dir := GDVars.partyPos.facing - (GDVars.partyPos.facing + 2) mod 4 div 2;
+      dir := GDVars.partyPos.facing - Word((GDVars.partyPos.facing + 2) mod 4) div 2;
       if creature^.hostile = 0 then
         { allies flee the other way }
         dir := dir + 4;
@@ -424,6 +405,11 @@ begin
     done := CombatAi.FinishRound(creature);
 end;
 
+{ Runs the AI's move-and-attack loop: a fleeing creature spends its movement; otherwise it attacks a target within its
+  weapon's range, re-equips when it holds a missile weapon with an enemy beside it, or moves toward a target. The loop
+  gives up after 20 passes. Note: the locked target can be nil and is read before the check for nil.
+  @param(creature The creature.)
+  @returns(True when the creature can no longer act.) }
 function AiMoveAttack(creature: Types.PCharRecord): Boolean;
 var
   done: Boolean;
@@ -537,6 +523,10 @@ begin
   AiMoveAttack := canAct = False;
 end;
 
+{ Ends a creature's round: a helpless creature, one with a ranged weapon or one out of initiative ends its actions, any
+  other guards.
+  @param(creature The creature.)
+  @returns(True.) }
 function FinishRound(creature: Types.PCharRecord): Boolean;
 begin
   CharHlp.ClearMessageWindow;
@@ -548,6 +538,12 @@ begin
     FinishRound := CharHlp.Guard(creature);
 end;
 
+{ Handles a key pressed during an AI turn: Alt-M toggles quick magic, space returns each creature that is neither an NPC
+  nor animated to manual control, and Alt-X tries the STING cheat. Pending keys are discarded afterwards. Note: the key
+  is tested whether or not the extended-key prefix came first, so an unprefixed 2 also toggles quick magic and an
+  unprefixed hyphen also tries the cheat.
+  @param(creature The creature.)
+  @returns(True when space put the creature itself back under manual control, which marks it to act again at once.) }
 function CheckKeystroke(creature: Types.PCharRecord): Boolean;
 var
   p: Types.PCharRecord;
@@ -592,6 +588,12 @@ begin
   GameIo.DiscardPendingKeys;
 end;
 
+{ Checks a creature's morale against the hit points it has lost and then, for hostiles, against the group's remaining
+  hit points; effects adjust the morale for each check. A failed check makes it flee when it is twice as fast as each
+  enemy, and otherwise surrender when its Intelligence is 6 or more. A turned creature flees, and party members never
+  check.
+  @param(creature The creature.)
+  @returns(True when the creature surrendered.) }
 function CheckMorale(creature: Types.PCharRecord): Boolean;
 var
   enemyMove: Byte;
@@ -686,6 +688,11 @@ begin
   CalcWeaponPriority := pri;
 end;
 
+{ Re-equips a creature with its best usable weapon (CalcWeaponPriority; its unarmed damage sets the bar for melee) and
+  its best shield (plus + 1). The ranged pick wins when it scores above half the melee score, has ammunition, and is a
+  true ranged weapon or no enemy is beside the creature. Cursed items are never swapped out; with too many hands in use
+  the shield, or else the weapon, is unreadied. The creature's information is redrawn when anything changed.
+  @param(creature The creature.) }
 procedure EquipWeaponAndArmor(creature: Types.PCharRecord);
 var
   bestRanged: Types.PItemRec;

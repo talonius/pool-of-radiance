@@ -169,12 +169,12 @@ procedure AddEffectWithMessage(creature: Types.PCharRecord; effId: Byte; minutes
   @returns(True when the creature was healed.) }
 function RestoreHitPoints(creature: Types.PCharRecord; hp: Byte; bypassRot: Boolean): Boolean;
 
-{ Revives a creature on its cell when the cell takes it, which in combat also places it there. It comes back okay and
-  enabled with the hit points given; in combat the map centers on it. A hostile creature stands up and grins, any other
-  gets back up, and the teams are counted again.
-  @param(creature The creature.)
-  @param(hp Its hit points.)
-  @returns(True when the creature was revived.) }
+{ Stands a creature back up with the given hit points when its combat cell can hold it: its status becomes okay, it is
+  enabled, the view is centered on it in combat, "stands up and grins" is printed for a hostile creature or "gets back
+  up" otherwise, and the teams are recounted.
+  @param(creature Creature revived.)
+  @param(hp Hit points it gets back.)
+  @returns(True when it revived.) }
 function ReviveDeadCreature(creature: Types.PCharRecord; hp: Byte): Boolean;
 
 implementation
@@ -679,9 +679,9 @@ begin
   GDVars.pendingDamage := damage;
   FxEngine.TriggerEffectsWithCondition(FxEngine.COND_NONWEAPON_DAMAGE, creature);
   if saved then
-    case Char(saveReduction) of
-      #1: GDVars.pendingDamage := 0;
-      #2: GDVars.pendingDamage := Integer(GDVars.pendingDamage) div 2;
+    case saveReduction of
+      1: GDVars.pendingDamage := 0;
+      2: GDVars.pendingDamage := GDVars.pendingDamage div 2;
     end;
   if GDVars.pendingDamage > 0 then begin
     if GDVars.pendingDamage <> 1 then
@@ -734,6 +734,8 @@ procedure AddEffectWithMessage(creature: Types.PCharRecord; effId: Byte; minutes
                                saveNegates, saved: Boolean; msg: Types.TStr40);
 var
   effect: Types.PEffectRec;
+  { Unused in this version; see the other implementations of this routine. }
+  oldEffect: Byte;
 begin
   GDVars.pendingEffectId := effId;
   FxEngine.TriggerEffectsWithCondition(FxEngine.COND_EFFECT_IMMUNITY, creature);

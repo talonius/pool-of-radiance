@@ -1,11 +1,12 @@
 { Combat loop, initiative selection and manual-control menus. }
+
 {$O+,F+}
 unit Combat;
 
 interface
 
-uses Types, C_Time, C_Npc, C_Cond, GDConsts, GDVars, Crt, GameIo, Border, Blit, CharHlp, MenuCore, CbtMap,
-  CombatAi, CombatSt, CbtActs, ViewChar, GameTime, Magic, FxEngine, C_Keys, C_Class, C_Status, C_Ifc, C_Gbvm, C_Dir;
+uses Types, C_Time, C_Npc, C_Cond, GDConsts, GDVars, Crt, CombatAi, CombatSt, GameTime, Magic, C_Keys, C_Class,
+  C_Status, C_Ifc, C_Gbvm, C_Dir, Blit, CbtMap, CbtActs, CharHlp, FxEngine, ViewChar, MenuCore, GameIo, Border;
 
 { Runs a battle. Each round counts the teams, runs each creature's round-start setup, clears the GBVM surprise flag,
   lets the creatures act in initiative order and then ends the round, which decides whether the battle goes on. A battle
@@ -272,8 +273,7 @@ begin
   if creature^.numberOfItems > 0 then
     menu := menu + 'Use ';
   hasSpell := False;
-  { 20 is the last index of memorizedSpells }
-  for i := 0 to 20 do
+  for i := 0 to SizeOf(creature^.memorizedSpells) div SizeOf(creature^.memorizedSpells[0]) - 1 do
     if creature^.memorizedSpells[i] > 0 then
       hasSpell := True;
   if hasSpell and (creature^.combatAddr^.castAllowed <> 0)

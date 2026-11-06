@@ -319,6 +319,8 @@ type
         { scroll spell slots }
         spells: array[1..3] of Byte);
   end;
+  PBytes = ^TBytes;
+  PImgBuf = ^TImgBuf;
   TArenaLoc = record
     { Arena coordinates. }
     x: ShortInt;
@@ -335,13 +337,8 @@ type
     hi: ShortInt;
   end;
   TBrkSet = set of ' '..'?';
-  { main-menu entry }
-  TMenuItem = record
-    { first character is the hotkey }
-    name: string[40];
-    { MainMenu updates availability }
-    enabled: Byte;
-  end;
+  TBytes = array[0..65000] of Byte;
+  TColorMap = array[0..7] of Byte;
   TColorTab = array[0..15] of Byte;
   TCombatTarget = record
     { arena registration index }
@@ -356,6 +353,44 @@ type
     dx: ShortInt;
     { cell Y offset }
     dy: ShortInt;
+  end;
+  TImgBuf = record
+    { image height in pixels }
+    height: Word;
+    { image width in CHARS (x8 for pixels) }
+    width: Word;
+    { image placement X from DAX header }
+    originX: Word;
+    { image placement Y from DAX header }
+    originY: Word;
+    { images in buffer }
+    count: Byte;
+    { EGA->CGA color map }
+    map: TColorMap;
+    { bytes in one image }
+    imgSize: Word;
+    { extra transparency space (default nil) }
+    transp: PBytes;
+    { image data (open-ended) }
+    data: array[0..32000] of Byte;
+  end;
+  { Krynn class rules SSI left behind (not all of its Krynn declarations were compiled out); PoR never uses them. }
+  TKrynnClassRules = record
+    { class/item-usability masks }
+    createClassBits: array[0..7] of Byte;
+    afterCreateClassBits: Byte;
+    { class selection masks }
+    classBits: array[0..7] of Byte;
+    afterClassBits: array[0..8] of Byte;
+    { hit-dice cap plus one }
+    maxClassLevels: array[0..7] of Byte;
+  end;
+  { main-menu entry }
+  TMenuItem = record
+    { first character is the hotkey }
+    name: string[40];
+    { MainMenu updates availability }
+    enabled: Byte;
   end;
   TName15 = string[15];
   TRandomItemTemplate = record
@@ -379,6 +414,37 @@ type
       0: (templates: array[1..19] of TRandomItemTemplate);
       1: (words: array[1..152] of Word);
       2: (wordBytes: array[1..152] of TWordBytes);
+  end;
+  TRuleAge = record
+    { years before the dice roll }
+    base: Word;
+    { dice count }
+    num: Byte;
+    { dice sides }
+    sides: Byte;
+  end;
+  TRuleGold = record
+    { CharGen awards ten gold per point, averaged over the classes }
+    num: Byte;
+    sides: Byte;
+  end;
+  { racial ability limits (GDConsts.raceStatLimits) }
+  TRuleRace = record
+    { by gender }
+    strMin: array[C_Gender.MALE..C_Gender.FEMALE] of Byte;
+    strMax: array[C_Gender.MALE..C_Gender.FEMALE] of Byte;
+    { exceptional-Str cap }
+    excMax: array[C_Gender.MALE..C_Gender.FEMALE] of Byte;
+    intMin: Byte;
+    intMax: Byte;
+    wisMin: Byte;
+    wisMax: Byte;
+    dexMin: Byte;
+    dexMax: Byte;
+    conMin: Byte;
+    conMax: Byte;
+    chaMin: Byte;
+    chaMax: Byte;
   end;
   TRuleXp = record
     { XP to reach level; -1 = unavailable }
@@ -438,8 +504,12 @@ type
       1: (segment: Word; minute: Word; turn: Word; hour: Word; day: Word; month: Word; year: Word);
   end;
   TGbvmSavedWalls = packed record
-    wallSetIds: array[1..3] of Word;
-    symbolSlots: array[1..3] of Word;
+    case Byte of
+      0: (wallSetIds: array[1..3] of Word;
+          symbolSlots: array[1..3] of Word);
+      1: (menuPrefix: array[1..5] of Word;
+          { Shares symbolSlots[3]. }
+          menuAnimation: Word);
   end;
   TGbvmWord = packed record
     case Byte of
@@ -506,30 +576,6 @@ type
   TGbvmZone1 = array[$6B00..$6EFF] of Word;
 
   { Blit types. }
-  PBytes = ^TBytes;
-  PImgBuf = ^TImgBuf;
-  TBytes = array[0..65000] of Byte;
-  TColorMap = array[0..7] of Byte;
-  TImgBuf = record
-    { image height in pixels }
-    height: Word;
-    { image width in CHARS (x8 for pixels) }
-    width: Word;
-    { image placement X from DAX header }
-    originX: Word;
-    { image placement Y from DAX header }
-    originY: Word;
-    { images in buffer }
-    count: Byte;
-    { EGA->CGA color map }
-    map: TColorMap;
-    { bytes in one image }
-    imgSize: Word;
-    { extra transparency space (default nil) }
-    transp: PBytes;
-    { image data (open-ended) }
-    data: array[0..32000] of Byte;
-  end;
   TVideoMode = (Cga, Ega, Tandy);
 
   { Border types. }
@@ -556,41 +602,6 @@ type
     distMode: Byte;
     { terrain-info indices }
     cells: array[0..24, 0..49] of Byte;
-  end;
-
-  { CharGen types. }
-  { startingAge entries }
-  TRuleAge = record
-    { years before the dice roll }
-    base: Word;
-    { dice count }
-    num: Byte;
-    { dice sides }
-    sides: Byte;
-  end;
-  { startingGold entries }
-  TRuleGold = record
-    { CharGen awards ten gold per point, averaged over the classes }
-    num: Byte;
-    sides: Byte;
-  end;
-  { racial ability limits (GDConsts.raceStatLimits) }
-  TRuleRace = record
-    { by gender }
-    strMin: array[C_Gender.MALE..C_Gender.FEMALE] of Byte;
-    strMax: array[C_Gender.MALE..C_Gender.FEMALE] of Byte;
-    { exceptional-Str cap }
-    excMax: array[C_Gender.MALE..C_Gender.FEMALE] of Byte;
-    intMin: Byte;
-    intMax: Byte;
-    wisMin: Byte;
-    wisMax: Byte;
-    dexMin: Byte;
-    dexMax: Byte;
-    conMin: Byte;
-    conMax: Byte;
-    chaMin: Byte;
-    chaMax: Byte;
   end;
 
   { Spell and downed-record types. }
@@ -671,11 +682,12 @@ type
   TEffectHandler = procedure(creature: PCharRecord; effectData: Pointer;
                              removed: Boolean);
 
-  { GameBoot types. }
-  PFreeRange = ^TFreeRange;
-  TFreeRange = record
-    rangeStart: Pointer;
-    rangeEnd: Pointer;
+  { MenuCore types. }
+  TMenuAuto = record
+    { centiseconds before auto-answer, 0=off }
+    timeout: LongInt;
+    { the auto-answer key }
+    key: Char;
   end;
 
   { Money types. }

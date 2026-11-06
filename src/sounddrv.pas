@@ -12,7 +12,8 @@ interface
 function SoundTime: LongInt;
 
 { Paces sound cleanup without relying on the timer interrupt, which the sound driver may have hooked. Busy-waits
-   against SoundTime. Note: a clock discontinuity can prolong the wait.
+   against SoundTime; ends early if a clock sample precedes the starting value, so a clock discontinuity cannot prolong
+   the wait.
    @param(centiseconds Number of centiseconds to wait.) }
 procedure SoundDelay(centiseconds: Word);
 
@@ -82,11 +83,15 @@ begin
 end;
 
 procedure SoundDelay(centiseconds: Word);
-var target: LongInt;
+var
+  target: LongInt;
+  now: LongInt;
 begin
   target := SoundDrv.SoundTime + centiseconds;
   repeat
-  until SoundDrv.SoundTime >= target;
+    now := SoundDrv.SoundTime;
+    if target - now > centiseconds then now := target + 1;
+  until now >= target;
 end;
 
 procedure SoundCommand(cmd: Word);
@@ -94,21 +99,20 @@ begin
   if GDVars.soundMode = C_Sound.OFF then Exit;
   if GDVars.soundAutoStop > 0 then SoundDrv.InstallSoundTimer;
   case cmd of
-    SoundDrv.CMD_DISABLE:
-      begin
-        SoundDrv.ProgramTandyVoices(SoundDrv.SILENT_TUNE);
-        SoundDrv.ProgramSpeakerVoices(SoundDrv.SILENT_TUNE);
-        SoundDrv.SetSoundOutputEnabled(SoundDrv.OUTPUT_DISABLED);
-      end;
+    SoundDrv.CMD_DISABLE: begin
+      SoundDrv.ProgramTandyVoices(SoundDrv.SILENT_TUNE);
+      SoundDrv.ProgramSpeakerVoices(SoundDrv.SILENT_TUNE);
+      SoundDrv.SetSoundOutputEnabled(SoundDrv.OUTPUT_DISABLED);
+    end;
     SoundDrv.CMD_ENABLE: SoundDrv.SetSoundOutputEnabled(SoundDrv.OUTPUT_ENABLED);
     SoundDrv.CMD_STOP: begin
       SoundDrv.ProgramTandyVoices(SoundDrv.SILENT_TUNE);
       SoundDrv.ProgramSpeakerVoices(SoundDrv.SILENT_TUNE);
     end;
   else
-    case Char(GDVars.soundMode) of
-      Char(C_Sound.SPEAKER): SoundDrv.ProgramSpeakerVoices(cmd - 1);
-      Char(C_Sound.TANDY): SoundDrv.ProgramTandyVoices(cmd - 1);
+    case GDVars.soundMode of
+      C_Sound.SPEAKER: SoundDrv.ProgramSpeakerVoices(cmd - 1);
+      C_Sound.TANDY: SoundDrv.ProgramTandyVoices(cmd - 1);
     end;
   end;
   if GDVars.soundAutoStop > 0 then begin

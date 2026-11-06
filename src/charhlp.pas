@@ -1,12 +1,45 @@
 { Shared creature operations: statistics, equipment, inventory, damage, targeting and party display. }
-{$F-}
+{$O+,F+}
 unit CharHlp;
 
 interface
 
-uses Types, C_Area, C_Item, C_Msg, GDConsts, GDVars, Crt, SoundDrv, TextRend, Border, Blit,
-  MenuCore, MapView, Wilds, Portrait, Pathing, CbtMap, C_Effect, C_Equip, C_Race, C_Keys, C_Class, C_Status, C_Ifc,
-  C_Money, C_Gbvm;
+uses Types, Crt, C_Area, C_Item, C_Msg, GDConsts, GDVars, MenuCore, MapView, Pathing, CbtMap, C_Effect, C_Equip, C_Race,
+  C_Keys, C_Class, C_Status, C_Ifc, C_Money, Blit, C_Gbvm, TextRend, Border, SoundDrv, Portrait, Wilds;
+
+type
+  TAcAdjust = array[0..4] of ShortInt;
+
+{ Recomputes to-hit and the main attack's damage for a readied weapon. The THAC0 value restarts from its base plus the
+  Dexterity missile adjustment and the Strength to-hit adjustment where the weapon takes them; the damage dice and bonus
+  come from the weapon's small-and-medium entry plus the Strength damage adjustment. The weapon's plus, and that of the
+  readied quarrels or arrows it fires, is added to both. An elf gets 1 more to hit with a bow, a long sword or a short
+  sword. Nothing changes without a readied weapon.
+  @param(creature The creature.) }
+procedure WeaponAdjust(creature: Types.PCharRecord);
+
+{ Sets a creature's movement from readied body armor's weight: up to 150 keeps the base movement, up to 399 gives 9 and
+  heavier gives 6, then 3 more when the armor has a plus and the movement is 9 or less. Other items change nothing.
+  @param(creature The creature.)
+  @param(item The item.) }
+procedure ArmorMoveAdjust(creature: Types.PCharRecord; item: Types.PItemRec);
+
+{ Folds one readied item into the armor-class adjustments. Only an item whose base armor value has bit 7 set counts; the
+  low seven bits are its own armor class. A shield sets the shield slot to its armor class plus its plus. An item with
+  armor class 0 adds its save bonus to the creature's and its plus to the slot of armor-class-0 items, except a ring,
+  which raises the best-ring slot to its plus. Any other item keeps the best armor class plus plus in the armor slot,
+  marking magical body armor when that new best is body armor with a positive plus.
+  @param(creature The creature.)
+  @param(item The item.)
+  @param(adj The adjustments: 0 Dexterity, 1 shield, 2 pluses of armor-class-0 items, 3 best ring, 4 best armor.)
+  @param(isMagicBody Set to True when the best armor becomes magical body armor.) }
+procedure AddItemArmorAdjust(creature: Types.PCharRecord; item: Types.PItemRec; var adj: TAcAdjust;
+                             var isMagicBody: Boolean);
+
+{ Lowers a creature's movement for the coins it carries past its weight allowance: up to 512 over changes nothing, and
+  each further band of 256 steps down to 9, 6 and 3. The movement is only ever lowered.
+  @param(creature The creature.) }
+procedure EncumbranceAdjust(creature: Types.PCharRecord);
 
 { Builds an item's label in its name: the Yes or No readied marker (inventory listings only), a * when a party member
   has Detect Magic and the item has a plus, a save bonus or a curse, the quantity when there is one, then the identified
@@ -145,16 +178,17 @@ procedure CombatAnimateMovingIcon(startX, startY, endX, endY: ShortInt; frames, 
   @param(s The message.) }
 procedure PrintNameStringAnim(creature: Types.PCharRecord; effect: Boolean; s: Types.TStr40);
 
-{ Tells whether a creature has an effect.
+{ Finds a creature's first copy of an effect.
   @param(creature The creature.)
-  @param(id The effect.)
-  @param(effect Receives the effect's node, or nil.)
+  @param(id The effect to look for.)
+  @param(effect Receives that effect, or nil.)
   @returns(True when the creature has the effect.) }
 function HasEffect(creature: Types.PCharRecord; id: Byte; var effect: Types.PEffectRec): Boolean;
 
-{ Deals damage and sets the creature's status. More than nine points beyond its hit points kill it; fewer leave it
-  dying; exactly none left leaves it unconscious, except that an animated creature dies. A creature no longer okay or
-  animated is taken out of action, and in combat out of its team's count and the initiative order.
+{ Subtracts damage from a creature's hit points. Falling more than 9 below 0, or an animated creature reaching 0, kills
+  it; 1..9 below makes it dying (in combat the deficit is kept as overkill); landing on 0 makes it unconscious. A
+  creature whose status is then anything but okay or animated is disabled at 0 hit points and, in combat, removed from
+  its side's count and loses its initiative.
   @param(creature The creature.)
   @param(dmg The damage.) }
 procedure InflictDamage(creature: Types.PCharRecord; dmg: Byte);
@@ -201,6 +235,10 @@ function Guard(creature: Types.PCharRecord): Boolean;
   @returns(The casting level.) }
 function GetCasterLevel(spell: Byte): Byte;
 
+{ Draws the noncombat windows: the full screen above the bottom row, the message window and the view.
+  @param(inset True to draw the picture inset's border as well.) }
+procedure DrawNoncombatWindows(inset: Boolean);
+
 { Redraws the screen for the interface state: the main-menu frame; the shop or temple windows with the portrait; the
   camp picture, party and status line; the indoor or outdoor map view, party and status line; or the loot picture and
   party. }
@@ -226,14 +264,14 @@ procedure DisplayCombatInterface;
   @param(sel The creature to start from; receives the choice, or nil.) }
 procedure SelectChar(query: Types.TStr40; addExit: Boolean; var sel: Types.PCharRecord);
 
-{ Tells whether a creature's readied weapon reaches beyond 1, thrown weapons included.
+{ Tells whether a creature's readied weapon has a range above 1.
   @param(creature The creature.)
   @returns(True for a ranged weapon.) }
 function HasRangedWeapon(creature: Types.PCharRecord): Boolean;
 
-{ Tells whether a creature's readied weapon is ranged and can be thrown with a Strength bonus.
+{ Tells whether a creature's readied weapon is ranged and is thrown as its own missile.
   @param(creature The creature.)
-  @returns(True for a throwable weapon.) }
+  @returns(True for a thrown weapon.) }
 function HasThrowableWeapon(creature: Types.PCharRecord): Boolean;
 
 { Finds the item that does the damage of a ranged attack: a thrown weapon itself, else the arrows readied with a bow or
@@ -250,10 +288,10 @@ function FindDamagingRangedWeapon(creature: Types.PCharRecord; var sel: Types.PI
   @returns(True at the limit.) }
 function AtLevelCap(creature: Types.PCharRecord; cls: ShortInt): Boolean;
 
-{ Finds a creature's encumbrance allowance in coins for its Strength; low Strength gives a negative allowance, while 0
-  gives none.
-  @param(creature The creature.)
-  @returns(The allowance.) }
+{ Computes the extra carrying allowance for a character's Strength on TranslatedStrength's scale, from -350 at 1..3 to
+  15000 at 30, and 0 at 8..11.
+  @param(creature The character.)
+  @returns(The allowance, which may be negative.) }
 function WeightAllowance(creature: Types.PCharRecord): Integer;
 
 { Finds a creature's missile to-hit adjustment for Dexterity: -4 below 3, rising from -3 at 3 to +3 at 18, then +3 to +5
@@ -267,9 +305,10 @@ function DexMissileAdjust(creature: Types.PCharRecord): ShortInt;
   @returns(The adjustment.) }
 function StrToHitAdjust(creature: Types.PCharRecord): ShortInt;
 
-{ Finds a creature's damage adjustment for Strength, 0 unless its Strength bonus applies.
+{ Computes the Strength damage bonus on TranslatedStrength's scale (-2 at 1..2 up to +14 at 30), or 0 unless the
+  creature's Strength bonus applies.
   @param(creature The creature.)
-  @returns(The adjustment.) }
+  @returns(The damage bonus.) }
 function StrDamageAdjust(creature: Types.PCharRecord): ShortInt;
 
 implementation
@@ -278,15 +317,6 @@ const
   { TBaseItemRec.props weapon-property bit: the Dexterity missile-attack bonus applies }
   ITEM_PROP_DEX_MISSILE = $02;
 
-type
-  TAcAdjust = array[0..4] of ShortInt;
-
-{ Recomputes to-hit and the main attack's damage for a readied weapon. The THAC0 value restarts from its base plus the
-  Dexterity missile adjustment and the Strength to-hit adjustment where the weapon takes them; the damage dice and bonus
-  come from the weapon's small-and-medium entry plus the Strength damage adjustment. The weapon's plus, and that of the
-  readied quarrels or arrows it fires, is added to both. An elf gets 1 more to hit with a bow, a long sword or a short
-  sword. Nothing changes without a readied weapon.
-  @param(creature The creature.) }
 procedure WeaponAdjust(creature: Types.PCharRecord);
 var
   w: Types.PItemRec;
@@ -321,10 +351,6 @@ begin
   creature^.curDiceA[1] := GDVars.baseItems[wtype].dmgSmDice;
 end;
 
-{ Sets a creature's movement from readied body armor's weight: up to 150 keeps the base movement, up to 399 gives 9 and
-  heavier gives 6, then 3 more when the armor has a plus and the movement is 9 or less. Other items change nothing.
-  @param(creature The creature.)
-  @param(item The item.) }
 procedure ArmorMoveAdjust(creature: Types.PCharRecord; item: Types.PItemRec);
 begin
   if GDVars.baseItems[item^.itemType].slot = C_Equip.ARMOR then begin
@@ -339,15 +365,6 @@ begin
   end;
 end;
 
-{ Folds one readied item into the armor-class adjustments. Only an item whose base armor value has bit 7 set counts; the
-  low seven bits are its own armor class. A shield sets the shield slot to its armor class plus its plus. An item with
-  armor class 0 adds its save bonus to the creature's and its plus to the slot of armor-class-0 items, except a ring,
-  which raises the best-ring slot to its plus. Any other item keeps the best armor class plus plus in the armor slot,
-  marking magical body armor when that new best is body armor with a positive plus.
-  @param(creature The creature.)
-  @param(item The item.)
-  @param(adj The adjustments: 0 Dexterity, 1 shield, 2 pluses of armor-class-0 items, 3 best ring, 4 best armor.)
-  @param(isMagicBody Set to True when the best armor becomes magical body armor.) }
 procedure AddItemArmorAdjust(creature: Types.PCharRecord; item: Types.PItemRec; var adj: TAcAdjust;
                              var isMagicBody: Boolean);
 var
@@ -378,9 +395,6 @@ begin
   end;
 end;
 
-{ Lowers a creature's movement for the coins it carries past its weight allowance: up to 512 over changes nothing, and
-  each further band of 256 steps down to 9, 6 and 3. The movement is only ever lowered.
-  @param(creature The creature.) }
 procedure EncumbranceAdjust(creature: Types.PCharRecord);
 var
   over: Integer;
@@ -542,7 +556,7 @@ begin
     Inc(row, 2);
     col := 23;
     CharHlp.PrintItemString(creature, creature^.equipped[C_Equip.WEAPON], 0, 0, False, False);
-    TextRend.DisplayMessageWindow(23, row + 1, 38, row + 1 + 2, LightGreen, True,
+    TextRend.DisplayMessageWindow(23, row + 1, 38, row + 1 + 1 + 1, LightGreen, True,
                                   creature^.equipped[C_Equip.WEAPON]^.name);
   end;
   row := GDVars.curRow + 1;
@@ -596,7 +610,7 @@ begin
     if item^.equipped <> 0 then begin
       Inc(GDVars.equippedWeight, w);
       slot := GDVars.baseItems[item^.itemType].slot;
-      case Integer(Byte(slot)) of
+      case Byte(slot) of
         C_Equip.WEAPON..C_Equip.BOOTS: creature^.equipped[slot] := item;
         C_Equip.FIRST_RING:
           if creature^.equipped[C_Equip.FIRST_RING] <> nil then begin
@@ -662,7 +676,7 @@ begin
   creature^.acCur := 0;
   for k := 0 to 4 do
     creature^.acCur := creature^.acCur + adj[k];
-  creature^.acBehind := adj[4] + adj[2] + adj[3] - 2;
+  creature^.acBehind := adj[4] + adj[2] + adj[3] - 1 - 1;
   if (creature^.classLevels[C_Class.FIGHTER_LEVEL] > 0) and (creature^.race > C_Race.MONSTER) then
     creature^.attackLevel := creature^.classLevels[C_Class.FIGHTER_LEVEL]
   else
@@ -885,7 +899,8 @@ begin
     end;
     Border.ClearBox(C_Msg.TEXT_LEFT, top, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM);
     CharHlp.DisplayCreatureName(creature, 1, top + 1, False);
-    TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, top + 2, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM, LightGreen, True, s);
+    TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, top + 1 + 1, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM, LightGreen, True,
+                                  s);
   end;
   if pause then begin
     TextRend.PauseOnly;
@@ -1244,7 +1259,7 @@ begin
   i := 1;
   while (GDVars.creatureArr[GDVars.targetList[i].idx] <> other) and (i < GDVars.targetCount) do
     Inc(i);
-  CalcDistance := Integer(GDVars.targetList[i].dist) div 2;
+  CalcDistance := GDVars.targetList[i].dist shr 1;
   Move(saved, GDVars.targetList, SizeOf(GDVars.targetList));
 end;
 
@@ -1266,17 +1281,15 @@ end;
 
 function GetCasterLevel(spell: Byte): Byte;
 begin
-  case Char(GDConsts.spellTable[spell].castClass) of
-    #0: GetCasterLevel := GDVars.curChar^.classLevels[C_Class.CLERIC_LEVEL];
-    #1: GetCasterLevel := GDVars.curChar^.classLevels[C_Class.MAGE_LEVEL];
-    #2: GetCasterLevel := 12;
+  case GDConsts.spellTable[spell].castClass of
+    0: GetCasterLevel := GDVars.curChar^.classLevels[C_Class.CLERIC_LEVEL];
+    1: GetCasterLevel := GDVars.curChar^.classLevels[C_Class.MAGE_LEVEL];
+    2: GetCasterLevel := 12;
   end;
   if GDVars.usingItem and (GDConsts.spellTable[spell].castClass <> 2) then
     GetCasterLevel := 6;
 end;
 
-{ Draws the noncombat windows: the full screen above the bottom row, the message window and the view.
-  @param(inset True to draw the picture inset's border as well.) }
 procedure DrawNoncombatWindows(inset: Boolean);
 begin
   Border.DrawWindow(1, 1, 38, 22, 0, White, '');
@@ -1288,36 +1301,36 @@ end;
 
 procedure DisplayNoncombatInterface;
 begin
-  case Char(GDVars.ifcState) of
-    #0: Border.DrawWindow(1, 1, 38, 22, 0, White, '');
-    #1: begin
-         CharHlp.DrawNoncombatWindows(True);
-         Portrait.LoadPortraitBufs(GDVars.portraitHead, GDVars.portraitBody);
-         Portrait.DisplayPortraitBufs(3, 3, True);
-       end;
-    #2: begin
-         CharHlp.DrawNoncombatWindows(True);
-         Portrait.LoadAnimation('PIC', 29, 0, GDVars.animData);
-         CharHlp.DisplayParty(GDVars.curChar);
-         CharHlp.PrintPositionAndTime;
-       end;
-    #4: begin
-         CharHlp.DrawNoncombatWindows(True);
-         MapView.DisplayMapView;
-         CharHlp.DisplayParty(GDVars.curChar);
-         CharHlp.PrintPositionAndTime;
-       end;
-    #3: begin
-         CharHlp.DrawNoncombatWindows(False);
-         MapView.DisplayMapView;
-         CharHlp.DisplayParty(GDVars.curChar);
-         CharHlp.PrintPositionAndTime;
-       end;
-    #6: begin
-         CharHlp.DrawNoncombatWindows(True);
-         Portrait.LoadAnimation('PIC', 1, 0, GDVars.animData);
-         CharHlp.DisplayParty(GDVars.curChar);
-       end;
+  case GDVars.ifcState of
+    C_Ifc.MAIN_MENU: Border.DrawWindow(1, 1, 38, 22, 0, White, '');
+    C_Ifc.SHOP_TEMPLE: begin
+      CharHlp.DrawNoncombatWindows(True);
+      Portrait.LoadPortraitBufs(GDVars.portraitHead, GDVars.portraitBody);
+      Portrait.DisplayPortraitBufs(3, 3, True);
+    end;
+    C_Ifc.CAMPING: begin
+      CharHlp.DrawNoncombatWindows(True);
+      Portrait.LoadAnimation('PIC', 29, 0, GDVars.animData);
+      CharHlp.DisplayParty(GDVars.curChar);
+      CharHlp.PrintPositionAndTime;
+    end;
+    C_Ifc.INDOORS: begin
+      CharHlp.DrawNoncombatWindows(True);
+      MapView.DisplayMapView;
+      CharHlp.DisplayParty(GDVars.curChar);
+      CharHlp.PrintPositionAndTime;
+    end;
+    C_Ifc.OUTDOORS: begin
+      CharHlp.DrawNoncombatWindows(False);
+      MapView.DisplayMapView;
+      CharHlp.DisplayParty(GDVars.curChar);
+      CharHlp.PrintPositionAndTime;
+    end;
+    C_Ifc.LOOT: begin
+      CharHlp.DrawNoncombatWindows(True);
+      Portrait.LoadAnimation('PIC', 1, 0, GDVars.animData);
+      CharHlp.DisplayParty(GDVars.curChar);
+    end;
   end;
 end;
 
@@ -1477,26 +1490,26 @@ begin
     lvl := classLevels[cls];
     if lvl <= 0 then
       Exit;
-    case Char(race) of
-      Char(C_Race.DWARF):
+    case race of
+      C_Race.DWARF:
         if cls = C_Class.FIGHTER_LEVEL then
           if ((lvl = 8) and (strCur = 17)) or ((lvl = 7) and (strCur < 17)) then
             AtLevelCap := True;
-      Char(C_Race.ELF):
+      C_Race.ELF:
         if cls = C_Class.FIGHTER_LEVEL then
           if (lvl = 7) or ((lvl = 6) and (strCur = 17)) or ((lvl = 5) and (strCur < 17)) then
             AtLevelCap := True;
-      Char(C_Race.GNOME):
+      C_Race.GNOME:
         if cls = C_Class.FIGHTER_LEVEL then
           if (lvl = 6) or ((lvl = 5) and (strCur < 18)) then
             AtLevelCap := True;
-      Char(C_Race.HALF_ELF):
+      C_Race.HALF_ELF:
         if (cls = C_Class.CLERIC_LEVEL) and (lvl = 5) then
           AtLevelCap := True
         else if cls = C_Class.FIGHTER_LEVEL then
           if (lvl = 8) or ((lvl = 7) and (strCur = 17)) or ((lvl = 6) and (strCur < 17)) then
             AtLevelCap := True;
-      Char(C_Race.HALFLING):
+      C_Race.HALFLING:
         if cls = C_Class.FIGHTER_LEVEL then
           if (lvl = 6) or ((lvl = 5) and (strCur = 17)) or ((lvl = 4) and (strCur < 17)) then
             AtLevelCap := True;

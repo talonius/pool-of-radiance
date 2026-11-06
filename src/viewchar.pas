@@ -4,8 +4,8 @@ unit ViewChar;
 
 interface
 
-uses Types, Crt, C_Npc, GDConsts, GDVars, TextRend, Border, CharHlp, MenuCore, Portrait, CbtMap,
-  Money, Magic, FxEngine, C_Effect, C_Equip, C_Keys, C_Class, C_Status, C_Ifc, C_Abil, C_Money;
+uses Types, Crt, C_Npc, GDConsts, GDVars, DaxIo, TextRend, Border, CharHlp, MenuCore, Portrait,
+  CbtMap, Money, Magic, FxEngine, C_Effect, C_Equip, C_Keys, C_Class, C_Status, C_Ifc, C_Abil, C_Money;
 
 { Draws the current character's full character sheet, through tempCr1. }
 procedure DisplayChar;
@@ -123,13 +123,13 @@ begin
   TextRend.DisplayString(1, 5, White, s);
   { the six ability scores }
   for i := C_Abil.STRENGTH to C_Abil.CHARISMA do begin
-    case Char(i) of
-      #0: s := 'STR ';
-      #1: s := 'INT ';
-      #2: s := 'WIS ';
-      #3: s := 'DEX ';
-      #4: s := 'CON ';
-      #5: s := 'CHA ';
+    case i of
+      C_Abil.STRENGTH: s := 'STR ';
+      C_Abil.INTELLIGENCE: s := 'INT ';
+      C_Abil.WISDOM: s := 'WIS ';
+      C_Abil.DEXTERITY: s := 'DEX ';
+      C_Abil.CONSTITUTION: s := 'CON ';
+      C_Abil.CHARISMA: s := 'CHA ';
     end;
     TextRend.DisplayString(1, i + 7, LightGreen, s);
     ViewChar.PrintStat(i, False);
@@ -460,9 +460,7 @@ var
 begin
   hasSpecial := item^.special > $7F;
   creature := GDVars.curChar;
-  if item^.equipped <> 0 then
-  { unready }
-  begin
+  if item^.equipped <> 0 then begin
     if item^.cursed <> 0 then
       CharHlp.PrintBottomLine('It''s Cursed')
     else begin
@@ -470,9 +468,7 @@ begin
       if hasSpecial then
         FxEngine.CallEffectHandler(item^.special, creature, item, True);
     end;
-  end else
-  { ready }
-  begin
+  end else begin
     err := 0;
     if creature^.handsEquipped + GDVars.baseItems[item^.itemType].hands > 2 then
       err := 3;
