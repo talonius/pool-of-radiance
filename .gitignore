@@ -1,0 +1,20 @@
+# The DOS tools build.sh needs: copied in by hand and never committed.
+/drive_c/
+
+# Build output. The results are SSI's own files; never commit them.
+/obj/
+/build/logs/
+# Git's patterns are case-sensitive, and DOS tools write upper case.
+*.TPU
+*.tpu
+*.OBJ
+*.obj
+*.EXE
+*.exe
+*.OVR
+*.ovr
+*.MAP
+*.map
+
+# DOSBox-X captures
+capture/

@@ -1,6 +1,6 @@
 @echo off
 rem Pool of Radiance v1.3: build packed START.EXE and GAME.OVR in e:\obj.
-rem gametools/build.sh runs this batch from e:\src and creates output/log dirs.
+rem build.sh runs this batch from e:\src and creates output/log dirs.
 rem Mounts: C: games, D: compiler, E: version tree, F: TASM, G: EXEPACK.
 rem Keep PATH at d:\; drive mounts avoid DOS 8.3 toolchain path truncation.
 rem TPC reads src\TPC.CFG; compiler and assembler outputs go to e:\obj.

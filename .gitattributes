@@ -1,3 +1,7 @@
-# Preserve DOS build-file bytes without Git newline conversion.
+# Preserve DOS build-file bytes without Git newline conversion. Batch files keep their
+# CRLF endings; Git's patterns are case-sensitive, so both spellings are listed.
 *.bat -text
+*.BAT -text
+
+# TPC reads these compiler switches directly under DOS.
 /src/TPC.CFG -text
