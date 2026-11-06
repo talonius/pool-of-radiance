@@ -1,0 +1,3 @@
+# Preserve DOS build-file bytes without Git newline conversion.
+*.bat -text
+/src/TPC.CFG -text
