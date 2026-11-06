@@ -6,14 +6,14 @@ interface
 
 uses Types, GDConsts, GDVars, Crt, GameIo, TextRend, Border, Portrait, C_Keys;
 
-{ Finds a member of a string list by position.
-  @param(n The member's position, counting from 0.)
-  @param(list The list's first member.)
+{ Finds a member of a list.
+  @param(n The member's place, from 0.)
+  @param(list The list.)
   @returns(The member, or nil when the list is shorter.) }
 function FindListMember(n: Integer; list: Types.PItemRec): Types.PItemRec;
 
-{ Counts the members of a string list.
-  @param(list The list's first member, or nil.)
+{ Counts the members of a list.
+  @param(list The list.)
   @returns(The number of members.) }
 function ListCount(list: Types.PItemRec): Integer;
 
@@ -68,14 +68,14 @@ function MenuVertical(query, menu: Types.TStr40; qCol, mCol, hlCol: Byte; ulCol,
   @returns(Y or N.) }
 function YesNoMenu(query: Types.TStr40; qCol, mCol, hlCol: Byte): Char;
 
-{ Allocates a list of empty members, as many as asked; the first is allocated before the count is read, so a count below
-  1 gives one member.
-  @param(n Members wanted.)
-  @param(list Receives the first member.) }
+{ Builds a list of empty menu entries; the first is allocated even when n is below 1. Each entry is allocated with only
+  the name, inUse and next fields of TItemRec; the fields past next do not exist.
+  @param(n The number of entries.)
+  @param(list Receives the list.) }
 procedure AllocStringList(n: Integer; var list: Types.PItemRec);
 
-{ Frees each member of a string list; the caller's pointer is not set to nil.
-  @param(list The list's first member, or nil.) }
+{ Frees each entry of a list built by AllocStringList. The caller's list pointer is left as it was, not set to nil.
+  @param(list The list.) }
 procedure FreeStringList(var list: Types.PItemRec);
 
 implementation

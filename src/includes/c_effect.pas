@@ -45,7 +45,7 @@ const
   BESTOW_CURSE = 36;
   BLINKING = 37;
   STRENGTH = 38;
-  { EclVm.MoveExtremes doubles movement on it }
+  { EclMenu.MoveExtremes doubles movement on it }
   HASTED = 39;
   CAST_STINKING_CLOUD = 40;
   PROTECTION_FROM_MISSILES = 41;

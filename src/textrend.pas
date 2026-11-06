@@ -1,24 +1,35 @@
-{ Game-font text rendering, message-window input and centisecond timing. }
+{ Game-font text rendering, message-window input, centisecond timing, and the EGA page and fill helpers. }
 {$O+,F+}
 unit TextRend;
 
 interface
 
-uses Types, DaxIo, C_Video, C_Ega, GDConsts, GDVars, Crt, Dos, GameIo, Video, C_Keys;
+uses Types, C_Video, C_Ega, GDConsts, GDVars, DaxIo, Crt, Dos, GameIo, C_Keys;
 
-{ Empty routine with no callers. }
-procedure NoopTextrend;
+{ Resets the EGA graphics controller (registers 0 to 5 to 0, color don't-care $0F, bit mask $FF) and enables writes to
+  the four planes. }
+procedure ResetEgaGc;
+
+{ Shows an EGA page (video BIOS function 5) and records its segment as the current page.
+  @param(page The page to show.) }
+procedure SetupEgaCurrentPage(page: Byte);
+
+{ Records an EGA page's segment as the other page.
+  @param(page The page.) }
+procedure SetupEgaOtherPage(page: Byte);
+
+{ Fills a character-cell rectangle of an EGA page with one color in write mode 2, then restores write mode 0 and points
+  the other page back at the page number saved for it.
+  @param(ulCol Left column.)
+  @param(ulRow Top row.)
+  @param(lrCol Right column.)
+  @param(lrRow Bottom row.)
+  @param(page The EGA page to fill.)
+  @param(color The fill color.) }
+procedure FillRectEga(ulCol, ulRow, lrCol, lrRow: ShortInt; page, color: Byte);
 
 { Loads the 8x8 game font (block 201 of 8X8D1.DAX) into the font buffer; nothing happens when it is missing. }
 procedure LoadGameFont;
-
-{ Writes a string in the game font from a cell, one character per cell. Nothing is drawn from a column beyond 39 or a
-  row beyond 39; RenderChar skips characters off the screen.
-  @param(col The first character's column.)
-  @param(row The row.)
-  @param(color The text color.)
-  @param(source The text.) }
-procedure DisplayString(col, row, color: Byte; source: string);
 
 { Draws a run of one game-font character rightward from a cell. Nothing is drawn when the first cell is off the 40x25
   screen or there is no font; the run itself is not clipped. CGA maps the color and writes packed pixels, EGA writes the
@@ -31,6 +42,21 @@ procedure DisplayString(col, row, color: Byte; source: string);
   @param(ch The character, or a font index when isAscii is 0.)
   @param(isAscii Nonzero to upper-case ch and take it mod 64 as the font index.) }
 procedure RenderChar(col, row, color, count, ch, isAscii: Byte);
+
+{ Blanks a run of cells; nothing happens when the first cell is off the screen.
+  @param(col The first cell's column.)
+  @param(row The cell row.)
+  @param(color The color to blank to.)
+  @param(count The number of cells.) }
+procedure PrintSpaces(col, row, color, count: Byte);
+
+{ Writes a string in the game font from a cell, one character per cell. Nothing is drawn from a column beyond 39 or a
+  row beyond 39; RenderChar skips characters off the screen.
+  @param(col The first character's column.)
+  @param(row The row.)
+  @param(color The text color.)
+  @param(source The text.) }
+procedure DisplayString(col, row, color: Byte; source: string);
 
 { Writes a string word-wrapped into a window, from the text cursor (curCol, curRow) when it is inside the window, else,
   or after clearing with clearFirst, from the top left. Punctuation (breakChars) stays with the word before it.
@@ -45,13 +71,6 @@ procedure RenderChar(col, row, color, count, ch, isAscii: Byte);
   @param(clearFirst True to clear the window and start at its top left.)
   @param(source The text.) }
 procedure DisplayMessageWindow(ulCol, ulRow, lrCol, lrRow, color: Byte; clearFirst: Boolean; source: string);
-
-{ Blanks a run of cells; nothing happens when the first cell is off the screen.
-  @param(col The first cell's column.)
-  @param(row The cell row.)
-  @param(color The color to blank to.)
-  @param(count The number of cells.) }
-procedure PrintSpaces(col, row, color, count: Byte);
 
 { Shows a prompt on the bottom row and reads text, echoed in white: a space through z is added while there is room and
   backspace deletes, until Enter or Escape. The row is cleared afterwards.
@@ -110,6 +129,65 @@ var
   tandyBank1: array[0..255] of TTdyRow absolute C_Video.GFX_BANK1_SEG:$0000;
   tandyBank2: array[0..255] of TTdyRow absolute C_Video.GFX_BANK2_SEG:$0000;
   tandyBank3: array[0..255] of TTdyRow absolute C_Video.GFX_BANK3_SEG:$0000;
+
+procedure ResetEgaGc;
+begin
+  Port[C_Ega.GC_ADDR_PORT] := 0;
+  Port[C_Ega.GC_DATA_PORT] := 0;
+  Port[C_Ega.GC_ADDR_PORT] := 1;
+  Port[C_Ega.GC_DATA_PORT] := 0;
+  Port[C_Ega.GC_ADDR_PORT] := 2;
+  Port[C_Ega.GC_DATA_PORT] := 0;
+  Port[C_Ega.GC_ADDR_PORT] := 3;
+  Port[C_Ega.GC_DATA_PORT] := 0;
+  Port[C_Ega.GC_ADDR_PORT] := 4;
+  Port[C_Ega.GC_DATA_PORT] := 0;
+  Port[C_Ega.GC_ADDR_PORT] := 5;
+  Port[C_Ega.GC_DATA_PORT] := 0;
+  Port[C_Ega.GC_ADDR_PORT] := 7;
+  Port[C_Ega.GC_DATA_PORT] := $0F;
+  Port[C_Ega.GC_ADDR_PORT] := 8;
+  Port[C_Ega.GC_DATA_PORT] := $FF;
+  Port[C_Ega.SEQ_ADDR_PORT] := C_Ega.SEQ_MAP_MASK_REG;
+  Port[C_Ega.SEQ_DATA_PORT] := C_Ega.MAP_MASK_ALL_PLANES;
+end;
+
+procedure SetupEgaCurrentPage(page: Byte);
+begin
+  GDVars.interruptRegs.ah := 5;
+  GDVars.interruptRegs.al := page;
+  Intr($10, Registers(GDVars.interruptRegs));
+  GDVars.egaCurPage := C_Video.EGA_VIDEO_SEG + (Word(page) shl 9);
+end;
+
+procedure SetupEgaOtherPage(page: Byte);
+begin
+  GDVars.egaOtherPage := C_Video.EGA_VIDEO_SEG + (Word(page) shl 9);
+end;
+
+procedure FillRectEga(ulCol, ulRow, lrCol, lrRow: ShortInt; page, color: Byte);
+var
+  savedPage: Byte;
+  dstOff: Word;
+  rowCount: Word;
+  i: Word;
+begin
+  savedPage := GDVars.pageNum;
+  dstOff := Word(ulRow) * 40 * 8 + ulCol;
+  rowCount := (lrRow - ulRow + 1) * 8 - 1;
+  TextRend.SetupEgaOtherPage(page);
+  TextRend.ResetEgaGc;
+  Port[C_Ega.GC_ADDR_PORT] := C_Ega.GC_MODE_REG;
+  Port[C_Ega.GC_DATA_PORT] := 2;
+  for i := 0 to rowCount do begin
+    FillChar(Mem[GDVars.egaOtherPage: dstOff], lrCol - ulCol + 1, color);
+    Inc(dstOff, 40);
+  end;
+  Port[C_Ega.GC_ADDR_PORT] := C_Ega.GC_MODE_REG;
+  Port[C_Ega.GC_DATA_PORT] := C_Ega.GC_WRITE_MODE_0;
+  GDVars.pageNum := savedPage;
+  TextRend.SetupEgaOtherPage(GDVars.pageNum);
+end;
 
 procedure LoadGameFont;
 var
@@ -262,7 +340,7 @@ var
     end;
   end;
 
-  { Skips the spaces at the start of the next line. }
+  { Skips the spaces a line break consumed. }
   procedure FindNewIndex;
   begin
     while (idx < len) and (source[idx] = ' ') do Inc(idx);
@@ -395,8 +473,8 @@ begin
       FillChar(cgaEvenRows, SizeOf(Types.TCgaBank), 0);
     end;
     Types.Ega: begin
-      Video.FillRectEga(0, 0, 39, 24, 0, Black);
-      Video.FillRectEga(0, 0, 39, 24, 1, Black);
+      TextRend.FillRectEga(0, 0, 39, 24, 0, Black);
+      TextRend.FillRectEga(0, 0, 39, 24, 1, Black);
     end;
     Types.Tandy: begin
       FillChar(tandyBank0, SizeOf(Types.TTandyBank), 0);
@@ -439,8 +517,8 @@ begin
       end;
     end;
     Types.Ega: begin
-      Video.FillRectEga(ulCol, ulRow, lrCol, lrRow, 0, Black);
-      Video.FillRectEga(ulCol, ulRow, lrCol, lrRow, 1, Black);
+      TextRend.FillRectEga(ulCol, ulRow, lrCol, lrRow, 0, Black);
+      TextRend.FillRectEga(ulCol, ulRow, lrCol, lrRow, 1, Black);
     end;
     Types.Tandy: begin
       firstRow := ulRow * 2;
@@ -455,10 +533,6 @@ begin
       end;
     end;
   end;
-end;
-
-procedure NoopTextrend;
-begin
 end;
 
 begin

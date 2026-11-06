@@ -10,10 +10,10 @@ uses Types, C_Time, C_Msg, GDConsts, GDVars, Crt, TextRend, CharHlp, MenuCore, M
 { Empty routine with no callers. }
 procedure NoopRest;
 
-{ Advances the game clock one unit at a time, carrying each component into the next, then ages the party's timed effects
-  by the same span.
-  @param(amount Number of units.)
-  @param(tUnit Clock component counted: 1 minutes, 2 tens of minutes, 3 hours, 4 days, 5 months, 6 years.) }
+{ Advances the game clock, kept in the GBVM clock words, one unit at a time with carries, then times out the effects by
+  the same duration.
+  @param(amount How many units to advance.)
+  @param(tUnit The unit: minutes, turns, hours, days, months or years, as the clock's component.) }
 procedure AdvanceTime(amount: Byte; tUnit: ShortInt);
 
 { Lets the player set the rest time (CampRestMenu), then rests in five-minute ticks, advancing the clock, healing and
@@ -33,13 +33,11 @@ const
   TIME_MONTH = 5;
   TIME_YEAR = 6;
 
-{ Ages the timed effects of the party by a span of time, in steps of at most ten minutes; an effect whose time runs out
-  is removed, and one with no duration never runs out. A flag per member marks the members that still have timed
-  effects. Outside camp every member is aged; in camp only flagged members are, and nothing happens when none is
-  flagged. Note: when the effect that runs out is second in a list, aging resumes at the first effect, which is aged
-  again.
-  @param(count Number of units.)
-  @param(tUnit Clock component counted.) }
+{ Ages the timed effects of the party by a duration, in steps of at most 10 minutes, removing those that expire. A
+  character stays flagged for this while it has a timed effect left. In camp only flagged characters are aged, and
+  nothing happens when none is flagged; otherwise every flag is set first.
+  @param(count How many units of the duration.)
+  @param(tUnit The unit, as the clock's component.) }
 procedure TimeOutEffects(count: Byte; tUnit: ShortInt);
 var
   u: ShortInt;
@@ -168,10 +166,10 @@ begin
   GameTime.TimeOutEffects(amount, tUnit);
 end;
 
-{ Takes a span off the rest time, borrowing from the larger components as needed; when there is nothing left to borrow,
-  the rest time is cleared. Nothing happens when no days, hours or minutes are left.
-  @param(count Number of units.)
-  @param(tUnit Clock component counted.) }
+{ Takes a duration off the rest time, borrowing from the higher components; when they cannot cover it, the rest time
+  becomes zero. Nothing happens when the rest time is already zero.
+  @param(count How many units to take off.)
+  @param(tUnit The unit, as the clock's component.) }
 procedure DecrementRestTime(count: Byte; tUnit: ShortInt);
 var
   j: ShortInt;
@@ -198,9 +196,9 @@ begin
   end;
 end;
 
-{ Formats a number with at least two digits, keeping the first two.
+{ Writes a number as two digits, with a leading zero below 10.
   @param(v The number.)
-  @returns(The digits, with a leading zero below 10.) }
+  @returns(The two digits.) }
 function TwoDigitStr(v: Byte): Types.TStr40;
 var
   s: Types.TStr40;
@@ -210,8 +208,8 @@ begin
   TwoDigitStr := Copy(s, 1, 2);
 end;
 
-{ Shows the rest time as days, hours and minutes on the message line, the selected field in white.
-  @param(hl Clock component shown in white: 2 minutes, 3 hours, 4 days; 0 for none.) }
+{ Shows the rest time as days, hours and minutes, one component highlighted.
+  @param(hl The component to highlight: 2 for the minutes, 3 for the hours, 4 for the days; 0 for none.) }
 procedure DisplayRestTime(hl: ShortInt);
 var
   i: ShortInt;
@@ -315,10 +313,10 @@ begin
   end;
 end;
 
-{ Scans a character's memorized-spell slots for spells still being memorized. Unless the finished flag is already set,
-  the first such spell is finished and announced, and the flag is set; the scan then goes on to the next one.
+{ Scans a character's memorized-spell slots for spells still being memorized. Unless done is already set, the first such
+  spell is finished and announced, and done is set; the scan then goes on to the next one.
   @param(creature The character.)
-  @param(done The finished flag: True to only look up the next pending spell; set when a spell is finished.)
+  @param(done True to only look up the next pending spell; set when a spell is finished.)
   @returns(The level of the next spell still pending, or 0 when there is none.) }
 function CheckMemorizeDone(creature: Types.PCharRecord; var done: Boolean): Byte;
 var
@@ -343,9 +341,9 @@ begin
   CheckMemorizeDone := lvl;
 end;
 
-{ Does for scribing what CheckMemorizeDone does for memorizing, over the spells queued for scribing on the character's
-  readable scrolls. Finishing one marks the spell known, removes it from the scroll and announces it. Note: removing the
-  spell may free the scroll while the scan goes on reading it.
+{ The scribing counterpart of CheckMemorizeDone, over the spells queued for scribing on the character's readable
+  scrolls. Finishing one marks the spell known, removes it from the scroll and announces it. Note: removing the spell
+  may free the scroll while the scan goes on reading it.
   @param(creature The character.)
   @param(done True to only look up the next pending spell; set when a spell is finished.)
   @returns(The level of the next spell still pending, or 0 when there is none.) }
@@ -406,9 +404,9 @@ begin
   end;
 end;
 
-{ Counts rest steps; every twelfth step, each party member's preparation wait drops by one, and when it reaches zero the
-  member's spell-preparation timer starts at three times the level of the next spell to scribe or memorize.
-  @param(tick The step counter, kept by the caller.) }
+{ Counts a rest tick and, every 12 ticks (an hour), counts down each party member's preparation delay; when it runs out,
+  the member's preparation timer is set from the level of the next pending scribing or memorizing.
+  @param(tick The tick counter, kept by the caller.) }
 procedure AdvanceSpellPrepBase(var tick: Byte);
 var
   i: Byte;

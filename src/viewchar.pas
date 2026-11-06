@@ -518,7 +518,7 @@ begin
   end;
 end;
 
-{ Gives an item to another party member chosen by the player, unless that member cannot carry it.
+{ Gives an item to another character chosen by the player, when that character can carry it.
   @param(item The item.) }
 procedure ItemTradeMenu(item: Types.PItemRec);
 var
@@ -540,7 +540,7 @@ begin
 end;
 
 { Splits an item stack: a copy holding half the quantity, rounded down, and unreadied, follows the original, which keeps
-  the rest. A quantity below 2 cannot be halved ("Can't halve that").
+  the rest.
   @param(item The item.) }
 procedure HalveItem(item: Types.PItemRec);
 var

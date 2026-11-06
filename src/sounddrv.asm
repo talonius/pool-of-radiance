@@ -1,7 +1,8 @@
-; Timer-driven PC-speaker and Tandy SN76489 sequencer linked by SoundDrv's {$L SOUNDDRV.OBJ}.
-; Owns the voice state, tune pointer tables, streams and saved INT 8 vector in CODE.
-; Pascal far entries take a Word argument where present and return with plain RETF.
-
+; Timer-driven PC-speaker and Tandy SN76489 sequencer, linked into SoundDrv.
+; InstallSoundTimer hooks INT 8; UninstallSoundTimer restores it and silences output.
+; ProgramSpeakerVoices and ProgramTandyVoices load four stream pointers per tune.
+; SetSoundOutputEnabled gates output while active sequencers keep advancing.
+; This code segment owns voice state, note tables, waveforms and music streams.
 CODE    SEGMENT BYTE PUBLIC             ; Leave the segment class unset so the Pascal linker can
         ASSUME  CS:CODE, DS:CODE        ; merge this object into the unit's code segment.
         PUBLIC  InstallSoundTimer, UninstallSoundTimer
@@ -20,207 +21,202 @@ vfOutPeriod     dw      0       ; vfPeriod plus the LFO; this is what the chip g
 vfLevel         dw      0       ; output level
 vfLevelAdd      dw      0       ; added to vfLevel each tick
 vfTempo         dw      0       ; low byte scales noteLen; a zero low byte is taken as 1
-vfReleaseLead   dw      0       ; ticks the gate closes before the note ends: seq_note
-                                ;   sets vfGateLen to the duration minus this
+vfReleaseLead   dw      0       ; ticks before the note ends at which release starts
+                                ;   seq_note sets vfGateLen to duration minus this
 vfTranspose     dw      0       ; added to a note's pitch before the octave reduction
-vfGateLen       dw      0       ; when it expires the envelope restarts at its 5th pair
+vfGateLen       dw      0       ; release countdown; expiry selects the 5th envelope pair
 vfEnvBase       dw      0       ; base of this voice's (value,ticks) envelope list
 vfEnvPos        dw      0       ; byte offset into that list
 vfEnvWait       dw      0       ; ticks left in the current envelope segment
-vfLfoTable      dw      0       ; base of the signed-sample LFO waveform
+vfLfoTable      dw      0       ; LFO waveform: lfoSine, lfoZero or lfoNoise
 vfLfoPhase      dw      0       ; LFO phase accumulator
 vfLfoRate       dw      0       ; added to vfLfoPhase each tick
 vfLfoDepth      dw      0       ; signed multiplier on the waveform sample
-vfLfoWrap       dw      0       ; vfLfoPhase wraps here
+vfLfoWrap       dw      0       ; subtracted once when the updated phase reaches it
 vfLoopCounterA  dw      0       ; SLOOP counter
-vfLoopCounterB  dw      0       ; Counter for a nested stream loop.
-                dw      3 dup(0)        ; Unidentified words, cleared with the voice state.
+vfLoopCounterB  dw      0       ; second loop counter; unused by these streams
+                dw      3 dup(0)        ; Reserved words, cleared with the voice state.
 VOICE   ENDS
 
 ; ---------------------------------------------------------------------------
 ; Note tables: one octave per device. seq_note selects a semitone,
 ; then shifts its period right by the octave number.
 ; ---------------------------------------------------------------------------
-; PC-speaker PIT divisors, one octave starting at nominal C1.
-spkC    equ 8E84h    ; C1
-spkCS   equ 8684h    ; C#1
-spkD    equ 7EF7h    ; D1
-spkDS   equ 77D7h    ; D#1
-spkE    equ 714Fh    ; E1
-spkF    equ 6AC4h    ; F1
-spkFS   equ 64C6h    ; F#1
-spkG    equ 5F1Eh    ; G1
-spkGS   equ 59C7h    ; G#1
-spkA    equ 54BDh    ; A1
-spkAS   equ 4FFCh    ; A#1
-spkB    equ 4B7Eh    ; B1
+; PC-speaker divisors for PIT channel 2, starting at C1.
+; Nominal frequency at a 1193182 Hz PIT clock in mode 3 is clock / divisor.
+spkC    equ 8E84h    ; C1    32.704 Hz
+spkCS   equ 8684h    ; C#1   34.649 Hz
+spkD    equ 7EF7h    ; D1    36.710 Hz
+spkDS   equ 77D7h    ; D#1   38.892 Hz
+spkE    equ 714Fh    ; E1    41.134 Hz; 2.9 cents flat
+spkF    equ 6AC4h    ; F1    43.655 Hz
+spkFS   equ 64C6h    ; F#1   46.251 Hz
+spkG    equ 5F1Eh    ; G1    49.001 Hz
+spkGS   equ 59C7h    ; G#1   51.916 Hz
+spkA    equ 54BDh    ; A1    55.003 Hz
+spkAS   equ 4FFCh    ; A#1   58.272 Hz
+spkB    equ 4B7Eh    ; B1    61.740 Hz
 
-; Tandy SN76489 periods, starting at nominal A2. Each 10-bit period is
-; shifted left by six; tick_tandy shifts it back before output.
-snA2    equ 0FFC0h   ; A2  n=1023
-snAS2   equ 0F140h   ; A#2 n=965
-snB2    equ 0E3C0h   ; B2  n=911
-snC3    equ 0D700h   ; C3  n=860
-snCS3   equ 0CB40h   ; C#3 n=813
-snD3    equ 0BF80h   ; D3  n=766
-snDS3   equ 0B4C0h   ; D#3 n=723
-snE3    equ 0AA80h   ; E3  n=682
-snF3    equ 0A100h   ; F3  n=644
-snFS3   equ 9800h    ; F#3 n=608
-snG3    equ 8F80h    ; G3  n=574
-snGS3   equ 8740h    ; G#3 n=541
+; Tandy SN76489 periods with nominal note names, starting at A2.
+; Each 10-bit period is shifted left by six; tick_tandy reverses that for output.
+snA2    equ 0FFC0h   ; A2  period=1023
+snAS2   equ 0F140h   ; A#2 period=965
+snB2    equ 0E3C0h   ; B2  period=911
+snC3    equ 0D700h   ; C3  period=860
+snCS3   equ 0CB40h   ; C#3 period=813
+snD3    equ 0BF80h   ; D3  period=766
+snDS3   equ 0B4C0h   ; D#3 period=723
+snE3    equ 0AA80h   ; E3  period=682
+snF3    equ 0A100h   ; F3  period=644
+snFS3   equ 9800h    ; F#3 period=608
+snG3    equ 8F80h    ; G3  period=574
+snGS3   equ 8740h    ; G#3 period=541
 
 ; ---------------------------------------------------------------------------
 ; Driver state.  The ISR and the voice writers reach all of it through CS.
 ; ---------------------------------------------------------------------------
 divCount        db      13              ; ticks left before the next BIOS INT 8 chain
-seqBusy         db      0               ; suppresses ISR voice work during a tune load
-                                        ;   and during nested timer interrupts
+seqBusy         db      0               ; protects voice-block loading from ISR stepping
 voiceLeft       db      0               ; voices still to visit this pass, 4 down to 1
 blockSize       db      SIZE VOICE      ; seq_note multiplies a voice index by it
-SilentTune      equ     0
-curTune         dw      SilentTune      ; zero bypasses voice stepping on both devices
+curTune         dw      0               ; tune id loaded; 0 = silent
 seqVoice        dw      0               ; the voice block seq_proc is running
 voiceBase       dw      0               ; block array of the device being ticked
 freqBase        dw      0               ; note table of the device being ticked
 seqRet          dw      0               ; the stream pointer SCALL saved -- one level only
 voiceTune       db      0,0,0,0         ; tune id per voice; seq_end clears a voice's entry
                                         ;   when that voice runs out of stream
-outputOn        db      1               ; zero keeps sequencing, gates the speaker off and
-                                        ;   writes full attenuation to the Tandy voices
+outputOn        db      1               ; master gate.  At 0 the sequencers keep running
+                                        ;   and the device writers silence the hardware
 
-; Sparse tick multipliers indexed by the note byte AND 1Fh: the nonzero values
-; alternate 2:3 and 3:4 ratios, from 2 through 64. seq_note scales the entry by
-; vfTempo's low byte, treating a zero low byte as 1.
+; Sparse straight/dotted note durations. seq_note uses the note byte AND 1Fh,
+; then scales the selected entry by the low byte of vfTempo.
 noteLen         db      000h,000h,000h,002h,000h,003h,004h,000h,006h,008h,000h,00Ch,010h,000h,018h,020h
                 db      000h,030h,040h
 
 ; Sequencer command dispatch for stream bytes 0FAh through 0FFh, in that order.
-; SRESET shares the clearing tail of seq_c_clear,
-; skipping SCLEAR's voice selection.
+; SRESET uses seq_c_clear's tail without selecting another voice.
 cmdTable        dw      seq_c_reset, seq_c_ret, seq_c_call
                 dw      seq_c_clear, seq_c_loop, seq_c_set
 
-; Four active PC-speaker voice blocks; nonzero song pointers clear and load them.
-spkrBlocks      db      000h,008h,090h,004h,000h,003h,000h,017h,000h,008h,090h,004h,000h,003h,000h,024h
-                db      000h,008h,090h,004h,000h,002h,000h,02Ah,000h,008h,090h,004h,000h,000h,000h,030h
-                db      000h,006h,030h,008h,000h,000h,000h,035h,000h,008h,090h,004h,000h,001h,000h,005h
-                db      000h,008h,090h,004h,000h,003h,000h,00Ah,000h,008h,090h,004h,000h,002h,000h,011h
-                db      000h,008h,090h,004h,000h,000h,000h,017h,000h,006h,030h,008h,000h,000h,000h,01Ch
-                db      000h,000h,000h,000h,000h,000h,000h,000h,000h,004h,0E8h,00Eh,000h,000h,020h,000h
-                db      000h,000h,002h,000h,002h,000h,000h,056h,000h,000h,094h,000h,000h,0A5h,000h,000h
-                db      0B4h,000h,000h,0C0h,000h,000h,0CBh,000h,000h,003h,042h,004h,055h,006h,089h,0E5h
-                db      002h,006h,089h,0ECh,004h,05Dh,004h,0CBh,002h,000h,002h,000h,000h,008h,000h,014h
-                db      002h,006h,0B0h,001h,004h,0BAh,006h,0CEh,003h,004h,0EEh,002h,006h,0B0h,000h,004h
-                db      0BAh,006h,0CFh,003h,004h,0EEh,002h,006h,0B0h,002h,004h,0BAh,006h,0CEh,003h,004h
-                db      0EEh,002h,006h,0B0h,000h,004h,0BAh,006h,0CFh,003h,004h,0EEh,002h,006h,0B0h,003h
+; Four speaker voice blocks; nonzero song pointers clear them.
+spkrBlocks      db      032h,034h,052h,008h,05Bh,0CDh,000h,00Ch,000h,001h,000h,004h,030h,018h,000h,000h
+                db      000h,01Bh,000h,002h,030h,014h,000h,000h,000h,02Bh,000h,000h,000h,014h,000h,000h
+                db      000h,008h,000h,000h,000h,014h,000h,000h,000h,01Fh,000h,006h,030h,04Ch,000h,000h
+                db      000h,007h,000h,000h,000h,018h,000h,000h,000h,010h,000h,006h,030h,050h,000h,000h
+                db      000h,013h,000h,008h,090h,010h,000h,000h,000h,005h,000h,008h,090h,010h,000h,002h
+                db      000h,00Fh,000h,000h,000h,01Ch,000h,000h,000h,016h,000h,000h,000h,028h,000h,000h
+                db      000h,025h,000h,000h,000h,024h,000h,000h,000h,02Ch,000h,000h,000h,02Ch,000h,000h
+                db      000h,033h,000h,000h,000h,02Ch,000h,000h,000h,042h,000h,000h,000h,028h,000h,000h
+                db      000h,050h,000h,000h,000h,024h,000h,000h,000h,057h,000h,008h,090h,010h,000h,000h
+                db      000h,05Ch,000h,000h,000h,024h,000h,000h,000h,069h,000h,000h,000h,028h,000h,000h
+                db      000h,078h,000h,008h,090h,010h,000h,002h,000h,07Ch,000h,000h,000h,018h,000h,000h
+                db      000h,087h,000h,000h,000h,028h,000h,000h,000h,08Eh,000h,000h,000h,024h,000h,000h
 
-; Spare space after the four active blocks.
-spkrSpare       db      004h,0BAh,006h,0CEh,003h,004h,0EEh,002h,006h,0B0h,000h,004h,0BAh,006h,0CFh,003h
-                db      004h,0EEh,002h,006h,0B0h,004h,004h,0BAh,006h,0CEh,003h,004h,0EEh,002h,006h,0B0h
-                db      000h,004h,0BAh,006h,0CFh,003h,004h,0EEh,002h,006h,0B0h,005h,004h,0BAh,006h,0CEh
-                db      003h,004h,0EEh,002h,006h,0B0h,000h,004h,0BAh,006h,0CFh,003h,004h,0EEh,002h,006h
-                db      0B0h,007h,004h,0BAh,006h,0CEh,003h,004h,0EEh,004h,030h,04Ch,000h,000h,000h,007h
-                db      000h,004h,030h,048h,000h,000h,000h,00Fh,000h,004h,030h,050h,000h,000h,000h,014h
-                db      000h,006h,090h,010h,000h,000h,000h,005h,000h,000h,000h,020h,000h,000h,000h,019h
-                db      000h,006h,0D0h,014h,000h,016h,000h,01Dh,000h,000h,000h,008h,000h,000h,000h,021h
-                db      000h,004h,030h,048h,000h,000h,000h,028h,000h,000h,000h,020h,000h,000h,000h,032h
-                db      000h,000h,000h,020h,000h,000h,000h,041h,000h,006h,0D0h,014h,000h,016h,000h,04Ch
-                db      000h,000h,000h,008h,000h,000h,000h,050h,000h,004h,030h,048h,000h,000h,000h,057h
-                db      000h,000h,000h,014h,000h,000h,000h,05Dh,000h,006h,090h,010h,000h,000h,000h,062h
+; Four spare voice blocks; not selected by these streams.
+spkrSpare       db      000h,095h,000h,000h,000h,020h,000h,000h,000h,099h,000h,008h,090h,010h,000h,000h
+                db      000h,004h,000h,008h,090h,010h,000h,001h,000h,007h,000h,008h,090h,010h,000h,000h
+                db      000h,00Bh,000h,000h,000h,01Ch,000h,000h,000h,014h,000h,000h,000h,024h,000h,000h
+                db      000h,01Bh,000h,000h,000h,028h,000h,000h,000h,022h,000h,000h,000h,020h,000h,000h
+                db      000h,026h,000h,008h,090h,010h,000h,000h,000h,005h,000h,008h,090h,010h,000h,002h
+                db      000h,014h,000h,000h,000h,020h,000h,000h,000h,01Bh,000h,000h,000h,01Ch,000h,000h
+                db      000h,021h,000h,008h,090h,010h,000h,002h,000h,027h,000h,000h,000h,000h,000h,000h
+                db      00Bh,000h,000h,000h,0E6h,000h,0DDh,000h,001h,000h,00Ch,000h,0B6h,000h,0DDh,000h
+                db      0FDh,05Bh,0CDh,000h,001h,000h,020h,001h,00Dh,05Ch,0CDh,000h,0EDh,05Bh,0CDh,000h
+                db      035h,051h,00Bh,054h,047h,041h,053h,045h,054h,032h,034h,058h,032h,034h,052h,048h
+                db      05Ch,0CDh,000h,00Ch,000h,001h,000h,000h,000h,000h,000h,063h,000h,000h,000h,0E6h
+                db      000h,0DDh,000h,001h,000h,080h,070h,019h,05Ch,0CDh,000h,038h,05Ch,0CDh,000h,05Eh
 
 spkrFreq        dw      spkC, spkCS, spkD, spkDS, spkE, spkF
                 dw      spkFS, spkG, spkGS, spkA, spkAS, spkB
 
 spkrVoice       dw      0               ; the block driving PIT channel 2 this pass
 
-; Four active Tandy voice blocks; nonzero song pointers clear and load them.
-tandyBlocks     db      090h,010h,000h,001h,000h,007h,000h,006h,090h,010h,000h,000h,000h,00Bh,000h,000h
-                db      000h,010h,000h,000h,000h,014h,000h,001h,004h,09Ah,010h,002h,030h,070h,001h,000h
-                db      000h,002h,006h,083h,046h,004h,0FDh,004h,028h,002h,000h,030h,001h,000h,043h,001h
-                db      002h,006h,03Bh,046h,004h,0F7h,002h,000h,052h,001h,00Ah,077h,0A7h,001h,0C8h,001h
-                db      000h,000h,002h,006h,08Bh,046h,004h,0F9h,006h,03Bh,046h,004h,0F7h,002h,000h,064h
-                db      001h,00Ah,075h,096h,001h,001h,002h,08Eh,001h,002h,006h,089h,046h,004h,0F9h,002h
-                db      000h,0DAh,000h,000h,0D6h,000h,000h,058h,001h,000h,07Bh,001h,00Ah,0EBh,09Eh,001h
-                db      0D0h,001h,05Ch,001h,00Ch,0CFh,001h,006h,0FFh,046h,004h,0F9h,00Ch,0D2h,001h,000h
-                db      04Bh,001h,000h,06Fh,001h,00Ch,0FFh,001h,002h,006h,0B0h,005h,004h,0BAh,006h,0CEh
+; Four Tandy voice blocks; nonzero song pointers clear them.
+tandyBlocks     db      05Ch,0CDh,000h,00Bh,054h,047h,041h,053h,045h,054h,032h,034h,058h,032h,034h,02Ah
+                db      05Ah,010h,050h,04Ch,041h,059h,045h,052h,043h,04Fh,04Ch,04Fh,052h,054h,041h,042h
+                db      04Ch,045h,052h,0A6h,05Ch,0CDh,000h,00Ch,000h,001h,000h,001h,000h,000h,000h,007h
+                db      000h,000h,000h,0E6h,000h,0DDh,000h,001h,000h,007h,000h,0B6h,000h,0DDh,000h,096h
+                db      05Ch,0CDh,000h,090h,055h,00Bh,054h,048h,045h,032h,034h,058h,032h,034h,053h,045h
+                db      054h,053h,000h,000h,000h,024h,000h,0DAh,05Ch,0CDh,000h,00Ch,000h,001h,000h,000h
+                db      000h,000h,000h,001h,000h,000h,000h,0E6h,000h,0DDh,000h,001h,000h,008h,000h,09Fh
+                db      027h,0CDh,000h,004h,055h,006h,089h,0E5h,002h,006h,089h,0ECh,004h,05Dh,004h,0CBh
+                db      002h,000h,002h,000h,000h,008h,000h,014h,001h,000h,000h,002h,00Ah,0EBh,0CAh,000h
 ; Fourth Tandy voice.
-tandyVoice3     db      003h,004h,0EEh,002h,006h,0B0h,000h,004h,0BAh,006h,0CFh,003h,004h,0EEh,002h,006h
-                db      08Ah,046h,004h,0FFh,004h,0A2h,00Eh,008h,090h,008h,000h,004h,000h,002h,004h,0A0h
-                db      00Eh,008h,090h,008h,000h,004h,000h,004h,050h,002h,000h,0CFh,001h,004h,00Eh,004h
+tandyVoice3     db      09Ah,001h,013h,000h,002h,000h,00Fh,000h,000h,01Bh,000h,00Ch,099h,001h,002h,006h
+                db      083h,07Eh,004h,006h,004h,000h,002h,000h,02Eh,000h,00Ah,076h,090h,000h,0A1h,001h
+                db      01Ch,000h,002h,006h,083h,03Eh,00Eh,008h,090h,010h,000h,002h,000h,004h,000h,002h
 
-; Spare space after the four active blocks.
-tandySpare      db      0E8h,00Eh,000h,000h,020h,000h,000h,000h,002h,000h,002h,000h,000h,056h,000h,000h
-                db      094h,000h,000h,0A5h,000h,000h,0B4h,000h,000h,0C0h,000h,000h,0CBh,000h,000h,081h
-                db      001h,000h,0AAh,001h,000h,0B5h,001h,000h,0C0h,001h,000h,0DBh,001h,002h,004h,055h
-                db      006h,089h,0E5h,006h,083h,0ECh,004h,00Ah,002h,006h,089h,0ECh,004h,05Dh,004h,0CAh
-                db      006h,00Ch,000h,002h,000h,00Fh,002h,000h,0EAh,001h,000h,01Ah,002h,014h,00Ah,050h
-                db      068h,079h,06Ch,061h,063h,074h,065h,072h,079h,000h,000h,000h,000h,000h,000h,000h
-                db      000h,000h,000h,005h,050h,069h,070h,065h,073h,000h,000h,000h,000h,000h,000h,000h
-                db      000h,000h,000h,000h,000h,000h,000h,000h,004h,048h,06Fh,06Ch,065h,000h,000h,000h
-                db      000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,005h,054h,06Fh
-                db      06Bh,065h,06Eh,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h
-                db      000h,000h,004h,052h,06Fh,062h,065h,000h,000h,000h,000h,000h,000h,000h,000h,000h
-                db      000h,004h,055h,006h,089h,0E5h,002h,006h,089h,0ECh,004h,05Dh,004h,0CBh,002h,000h
+; Four spare Tandy voice blocks; not selected by these streams.
+tandySpare      db      000h,042h,000h,00Ah,075h,06Eh,000h,0ABh,001h,03Ah,000h,002h,004h,00Eh,004h,0E8h
+                db      00Eh,000h,000h,020h,000h,000h,000h,002h,000h,04Fh,000h,000h,05Bh,000h,00Ch,0AAh
+                db      001h,002h,000h,067h,000h,002h,004h,00Eh,004h,0E8h,00Eh,000h,000h,01Ch,000h,000h
+                db      000h,002h,000h,036h,000h,000h,071h,000h,00Ah,0EBh,096h,000h,0B4h,001h,053h,000h
+                db      00Ch,0ACh,001h,000h,075h,000h,00Ch,0B0h,001h,002h,006h,08Bh,046h,004h,006h,004h
+                db      0A3h,00Eh,008h,090h,010h,000h,002h,000h,002h,000h,024h,000h,000h,081h,000h,000h
+                db      099h,000h,002h,004h,055h,006h,089h,0E5h,002h,006h,089h,0ECh,004h,05Dh,004h,0CAh
+                db      006h,002h,000h,002h,000h,0B2h,000h,000h,0A8h,000h,00Ch,0B6h,001h,000h,0B8h,000h
+                db      014h,0BBh,000h,002h,004h,0B8h,006h,001h,000h,004h,050h,002h,000h,0D3h,000h,004h
+                db      00Eh,004h,0E8h,00Eh,000h,000h,02Ch,000h,000h,000h,002h,00Ah,0EBh,0D6h,001h,011h
+                db      001h,0CBh,000h,00Ch,006h,001h,004h,03Dh,006h,0FFh,000h,00Ah,075h,03Dh,001h,017h
+                db      001h,0EBh,000h,002h,006h,031h,0C0h,004h,050h,002h,000h,003h,001h,004h,00Eh,004h
 
 tandyFreq       dw      snA2, snAS2, snB2, snC3, snCS3, snD3
                 dw      snDS3, snE3, snF3, snFS3, snG3, snGS3
 
 ; ---------------------------------------------------------------------------
 ; SONG TABLES.  One row per tune id, four stream pointers per row -- voice 0 to
-; voice 3. Both ProgramSpeakerVoices and ProgramTandyVoices index by id * 8.
-; A zero pointer preserves the corresponding voice block.
+; voice 3. The voice writers index by id * 8; zero skips clearing/loading that block.
 ; ---------------------------------------------------------------------------
-; Speaker output selects one voice; later streams also program other voice blocks.
-songTableA      dw      silentA,    silentA,    silentA,    silentA     ; tune  0
-                dw      tuneA01_v0, silentA,    silentA,    silentA     ; tune  1
-                dw      tuneA02_v0, silentA,    silentA,    silentA     ; tune  2
-                dw      tuneA03_v0, silentA,    silentA,    silentA     ; tune  3
-                dw      tuneA04_v0, silentA,    silentA,    silentA     ; tune  4
-                dw      tuneA05_v0, silentA,    silentA,    silentA     ; tune  5
-                dw      tuneA06_v0, silentA,    silentA,    silentA     ; tune  6
-                dw      tuneA07_v0, silentA,    silentA,    silentA     ; tune  7
-                dw      tuneA08_v0, silentA,    silentA,    silentA     ; tune  8
-                dw      tuneA09_v0, silentA,    silentA,    silentA     ; tune  9
-                dw      tuneA10_v0, silentA,    silentA,    silentA     ; tune 10
-                dw      tuneA11_v0, silentA,    silentA,    silentA     ; tune 11
-                dw      tuneA12_v0, 0,          0,          0           ; tune 12
-                dw      tuneA13_v0, 0,          0,          0           ; tune 13
-                dw      tuneA14_v0, 0,          0,          0           ; tune 14
-                dw      tuneA15_v0, 0,          0,          0           ; tune 15
-                dw      tuneA16_v0, 0,          0,          0           ; tune 16
-                dw      tuneA17_v0, 0,          0,          0           ; tune 17
-                dw      tuneA18_v0, 0,          0,          0           ; tune 18
-                dw      tuneA19_v0, 0,          0,          0           ; tune 19
+; Speaker output selects one of four voices; later streams arrange notes on voices 0..2.
+songTableA      dw      silentA,    silentA,    silentA,    silentA      ; tune  0
+                dw      tuneA01_v0, silentA,    silentA,    silentA      ; tune  1
+                dw      tuneA02_v0, silentA,    silentA,    silentA      ; tune  2
+                dw      tuneA03_v0, silentA,    silentA,    silentA      ; tune  3
+                dw      tuneA04_v0, silentA,    silentA,    silentA      ; tune  4
+                dw      tuneA05_v0, silentA,    silentA,    silentA      ; tune  5
+                dw      tuneA06_v0, silentA,    silentA,    silentA      ; tune  6
+                dw      tuneA07_v0, silentA,    silentA,    silentA      ; tune  7
+                dw      tuneA08_v0, silentA,    silentA,    silentA      ; tune  8
+                dw      tuneA09_v0, silentA,    silentA,    silentA      ; tune  9
+                dw      tuneA10_v0, silentA,    silentA,    silentA      ; tune 10
+                dw      tuneA11_v0, silentA,    silentA,    silentA      ; tune 11
+                dw      tuneA12_v0, 0,          0,          0            ; tune 12
+                dw      tuneA13_v0, 0,          0,          0            ; tune 13
+                dw      tuneA14_v0, 0,          0,          0            ; tune 14
+                dw      tuneA15_v0, 0,          0,          0            ; tune 15
+                dw      tuneA16_v0, 0,          0,          0            ; tune 16
+                dw      tuneA17_v0, 0,          0,          0            ; tune 17
+                dw      tuneA18_v0, 0,          0,          0            ; tune 18
+                dw      tuneA19_v0, 0,          0,          0            ; tune 19
 
-; Tandy tunes use three tone voices and a noise voice.
-songTableB      dw      silentB,    silentB,    silentB,    silentB     ; tune  0
-                dw      tuneB01_v0, tuneB01_v1, tuneB01_v2, silentB     ; tune  1
-                dw      silentB,    silentB,    silentB,    tuneB02_v3  ; tune  2
-                dw      tuneB03_v0, tuneB03_v1, tuneB03_v2, silentB     ; tune  3
-                dw      tuneB04_v0, silentB,    tuneB04_v2, tuneB04_v3  ; tune  4
-                dw      tuneB05_v0, silentB,    silentB,    silentB     ; tune  5
-                dw      silentB,    silentB,    tuneB06_v2, tuneB06_v3  ; tune  6
-                dw      tuneB07_v0, tuneB07_v1, silentB,    silentB     ; tune  7
-                dw      silentB,    silentB,    silentB,    tuneB08_v3  ; tune  8
-                dw      silentB,    silentB,    silentB,    tuneB09_v3  ; tune  9
-                dw      silentB,    silentB,    tuneB10_v2, tuneB10_v3  ; tune 10
-                dw      tuneB11_v0, tuneB11_v1, tuneB11_v2, silentB     ; tune 11
-                dw      tuneB12_v0, silentB,    silentB,    silentB     ; tune 12
-                dw      tuneB13_v0, silentB,    silentB,    silentB     ; tune 13
-                dw      tuneB14_v0, silentB,    silentB,    silentB     ; tune 14
-                dw      tuneB15_v0, silentB,    silentB,    silentB     ; tune 15
-                dw      tuneB16_v0, silentB,    silentB,    silentB     ; tune 16
-                dw      tuneB17_v0, silentB,    silentB,    silentB     ; tune 17
-                dw      tuneB18_v0, silentB,    silentB,    silentB     ; tune 18
-                dw      tuneB19_v0, silentB,    silentB,    silentB     ; tune 19
+; Tandy streams use three tone voices and the noise voice.
+songTableB      dw      silentB,    silentB,    silentB,    silentB      ; tune  0
+                dw      tuneB01_v0, tuneB01_v1, tuneB01_v2, silentB      ; tune  1
+                dw      silentB,    silentB,    silentB,    tuneB02_v3   ; tune  2
+                dw      tuneB03_v0, tuneB03_v1, tuneB03_v2, silentB      ; tune  3
+                dw      tuneB04_v0, silentB,    tuneB04_v2, tuneB04_v3   ; tune  4
+                dw      tuneB05_v0, silentB,    silentB,    silentB      ; tune  5
+                dw      silentB,    silentB,    tuneB06_v2, tuneB06_v3   ; tune  6
+                dw      tuneB07_v0, tuneB07_v1, silentB,    silentB      ; tune  7
+                dw      silentB,    silentB,    silentB,    tuneB08_v3   ; tune  8
+                dw      silentB,    silentB,    silentB,    tuneB09_v3   ; tune  9
+                dw      silentB,    silentB,    tuneB10_v2, tuneB10_v3   ; tune 10
+                dw      tuneB11_v0, tuneB11_v1, tuneB11_v2, silentB      ; tune 11
+                dw      tuneB12_v0, silentB,    silentB,    silentB      ; tune 12
+                dw      tuneB13_v0, silentB,    silentB,    silentB      ; tune 13
+                dw      tuneB14_v0, silentB,    silentB,    silentB      ; tune 14
+                dw      tuneB15_v0, silentB,    silentB,    silentB      ; tune 15
+                dw      tuneB16_v0, silentB,    silentB,    silentB      ; tune 16
+                dw      tuneB17_v0, silentB,    silentB,    silentB      ; tune 17
+                dw      tuneB18_v0, silentB,    silentB,    silentB      ; tune 18
+                dw      tuneB19_v0, silentB,    silentB,    silentB      ; tune 19
 
 ; ---------------------------------------------------------------------------
 ; LFO WAVEFORMS.  A voice picks one by pointing vfLfoTable at it; voice_step reads
 ; a byte, scales it by vfLfoDepth and adds the result to the pitch going out.
 ; ---------------------------------------------------------------------------
 ; One sine cycle: 256 signed samples, amplitude 7Eh,
-; approximately round(126 * sin(2*pi*i/256)).
 lfoSine         db      000h,003h,006h,009h,00Ch,00Fh,012h,015h,018h,01Bh,01Eh,021h,024h,027h,02Ah,02Dh
                 db      030h,033h,036h,039h,03Bh,03Eh,041h,043h,046h,049h,04Bh,04Eh,050h,052h,055h,057h
                 db      059h,05Bh,05Eh,060h,062h,064h,066h,067h,069h,06Bh,06Ch,06Eh,070h,071h,072h,074h
@@ -238,10 +234,10 @@ lfoSine         db      000h,003h,006h,009h,00Ch,00Fh,012h,015h,018h,01Bh,01Eh,0
                 db      0A7h,0A9h,0ABh,0AEh,0B0h,0B2h,0B5h,0B7h,0BAh,0BDh,0BFh,0C2h,0C5h,0C7h,0CAh,0CDh
                 db      0D0h,0D3h,0D6h,0D9h,0DCh,0DFh,0E2h,0E5h,0E8h,0EBh,0EEh,0F1h,0F4h,0F7h,0FAh,0FDh
 
-; First half of the 32-sample waveform used by setupA and setupB.
+; Sixteen zero samples; setupA/setupB voice 0 also index the adjacent lfoFlat.
 lfoZero         db      000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h
 
-; Second half of that waveform: fixed positive samples.
+; Sixteen +120 samples, read by lfoZero users at indices 16..31.
 lfoFlat         db      078h,078h,078h,078h,078h,078h,078h,078h,078h,078h,078h,078h,078h,078h,078h,078h
 
 ; Pseudo-random waveform for percussion and sound effects.
@@ -279,7 +275,8 @@ lfoNoise        db      029h,023h,0BEh,084h,0E1h,06Ch,0D6h,0AEh,052h,090h,049h,0
                 db      099h,0CDh,0D3h,00Dh,0F0h,044h,03Ah,0B4h,0A6h,066h,053h,033h,00Bh,0CBh,0A1h,010h
 
 ; ---------------------------------------------------------------------------
-; Streams and envelope lists, referenced by song tables and sequencer commands.
+; THE STREAMS.  One label per stream, reached from songTableA/songTableB or from
+; an SCALL, an SLOOP or a vfEnvBase inside another stream.
 ; ---------------------------------------------------------------------------
 ; Pitches are scale degrees above the active note table's base -- C for the speaker
 ; table, A for the Tandy one -- not concert pitches.  seq_note adds the voice's
@@ -297,12 +294,12 @@ NT_A    equ 9
 NT_AS   equ 10
 NT_B    equ 11
 OCT     equ 12                      ; one octave
-REST    equ 7Fh                     ; no new note is programmed
+REST    equ 7Fh                     ; the pitch that sounds nothing
 
 ; One macro per sequencer record, each emitting the record the driver decodes.
-; TASM splits a macro argument list on whitespace as well as on commas, so an
+; TASM splits macro arguments on whitespace as well as commas, so an
 ; argument expression must carry none: NT_E+3*OCT, never NT_E + 3 * OCT.
-SRESET  MACRO                       ;; 0FAh -- reset pitch, envelope and LFO state
+SRESET  MACRO                       ;; 0FAh -- reset pitch, envelope and LFO fields
         db 0FAh
         ENDM
 SRET    MACRO                       ;; 0FBh -- back to the stream SCALL came from
@@ -313,10 +310,10 @@ SCALL   MACRO target                ;; 0FCh -- call a stream; seqRet holds one l
         dw target
         ENDM
 SCLEAR  MACRO vnum                  ;; 0FDh -- select voice vnum of the active device
-        db 0FDh                     ;;         and apply SRESET
+        db 0FDh                     ;;         and apply SRESET to its fields
         dw (vnum) * SIZE VOICE
         ENDM
-SLOOP   MACRO field, target         ;; 0FEh -- zero jumps; otherwise decrement and jump if nonzero
+SLOOP   MACRO field, target         ;; 0FEh -- decrement unless zero; jump unless it reaches zero
         db 0FEh, field
         dw target
         ENDM
@@ -336,6 +333,7 @@ SENV    MACRO value, ticks          ;; one envelope segment
 SNOTE   MACRO vnum, len, pitch, last  ;; a note: voice, noteLen index, pitch, run-end
         db ((vnum) SHL 5) OR (len), ((last) SHL 7) OR (pitch)
         ENDM
+
 tuneA10_v0:
         SSET    vfLevel,         3
         SSET    vfPeriod,        7530h
@@ -356,9 +354,14 @@ tuneA10_v0:
 tuneA08_v0:
         SSET    vfLevel,         3
         SSET    vfPeriod,        0FA0h
-        SWAIT   5
-        SSET    vfPeriod,        3E8h
-        SWAIT   4
+        SSET    vfPeriodAdd,     0FFECh
+        SSET    vfLfoTable,      lfoNoise
+        SSET    vfLfoWrap,       2000h
+        SSET    vfLfoDepth,      7D0h
+        SSET    vfLfoRate,       27h
+        SWAIT   20
+        SSET    vfPeriodAdd,     14h
+        SWAIT   40
         SSET    vfLevel,         0
         SWAIT   0
 tuneA09_v0:
@@ -369,7 +372,7 @@ tuneA09_v0:
         SSET    vfLfoWrap,       2000h
         SSET    vfLfoDepth,      1770h
         SSET    vfLfoRate,       7Bh
-        SWAIT   8
+        SWAIT   20
         SSET    vfLevel,         0
         SWAIT   0
 tuneA07_v0:
@@ -384,37 +387,28 @@ tuneA07_v0_loop:
         SLOOP   vfLoopCounterA,  tuneA07_v0_loop
         SSET    vfLevel,         0
         SWAIT   0
-tuneA02_v0:
+tuneA06_v0:
         SSET    vfLevel,         3
         SSET    vfLfoTable,      lfoNoise
         SSET    vfLfoWrap,       2000h
-        SSET    vfLfoDepth,      640h
+        SSET    vfLfoDepth,      258h
         SSET    vfLfoRate,       19Bh
-        SSET    vfPeriod,        10CCh
-        SSET    vfPeriodAdd,     0Ah
-        SWAIT   30
-        SSET    vfLfoDepth,      384h
         SSET    vfPeriod,        514h
-        SSET    vfPeriodAdd,     50h
-        SWAIT   5
+        SSET    vfPeriodAdd,     0Ah
+        SWAIT   10
+        SSET    vfPeriod,        8FCh
+        SWAIT   10
         SSET    vfLevel,         0
         SWAIT   0
 tuneA05_v0:
         SSET    vfLevel,         3
-        SSET    vfLoopCounterA,  5
-        SSET    vfPeriod,        1838h
+        SSET    vfPeriod,        1A0h
+        SSET    vfLoopCounterA,  12
 tuneA05_v0_loop:
-        SSET    vfPeriodAdd,     0
-        SWAIT   6
-        SSET    vfLoopCounterB,  12
-; Nested stream loop: vfLoopCounterB counts this inner loop;
-; tuneA05_v0_loop uses vfLoopCounterA for the outer loop.
-tuneA05_v0_inner:
-        SSET    vfPeriodAdd,     0FC5Eh
-        SWAIT   1
-        SSET    vfPeriodAdd,     384h
-        SWAIT   1
-        SLOOP   vfLoopCounterB,  tuneA05_v0_inner
+        SSET    vfPeriodAdd,     0FFFEh
+        SWAIT   12
+        SSET    vfPeriodAdd,     2
+        SWAIT   8
         SLOOP   vfLoopCounterA,  tuneA05_v0_loop
         SSET    vfLevel,         0
         SWAIT   0
@@ -436,7 +430,9 @@ tuneA04_v0:
         SSET    vfLfoWrap,       2000h
         SSET    vfLfoDepth,      2710h
         SSET    vfLfoRate,       10h
-        SSET    vfPeriod,        2EE0h
+        SSET    vfPeriod,        4E20h
+        SSET    vfPeriodAdd,     0FFABh
+        SWAIT   80
         SSET    vfLoopCounterA,  44
 tuneA04_v0_loop:
         SSET    vfPeriodAdd,     0F1F0h
@@ -444,19 +440,19 @@ tuneA04_v0_loop:
         SSET    vfPeriodAdd,     0E88h
         SWAIT   2
         SLOOP   vfLoopCounterA,  tuneA04_v0_loop
+        SSET    vfPeriodAdd,     46h
+        SWAIT   120
         SSET    vfLevel,         0
         SWAIT   0
-tuneA06_v0:
+tuneA02_v0:
         SSET    vfLevel,         3
         SSET    vfLfoTable,      lfoNoise
         SSET    vfLfoWrap,       2000h
-        SSET    vfLfoDepth,      0A28h
+        SSET    vfLfoDepth,      7D0h
         SSET    vfLfoRate,       10h
-        SSET    vfPeriod,        1770h
-        SSET    vfPeriodAdd,     0FF60h
-        SWAIT   30
+        SSET    vfPeriod,        0FA0h
         SSET    vfPeriodAdd,     46h
-        SWAIT   35
+        SWAIT   25
         SSET    vfLevel,         0
         SWAIT   0
 ; Empty stream: silence the voice and stop.
@@ -465,21 +461,16 @@ silentA:
         SWAIT   0
 tuneA01_v0:
         SSET    vfLevel,         3
-        SSET    vfPeriod,        1388h
-        SSET    vfLfoTable,      lfoSine
-        SSET    vfLfoWrap,       1000h
-        SSET    vfLfoDepth,      1F4h
-        SSET    vfLfoRate,       4Eh
-        SSET    vfLoopCounterA,  40
+        SSET    vfLfoTable,      lfoNoise
+        SSET    vfLfoWrap,       2000h
+        SSET    vfLfoDepth,      46h
+        SSET    vfLfoRate,       19h
+        SSET    vfLoopCounterA,  6
 tuneA01_v0_loop:
-        SSET    vfPeriodAdd,     0
-        SWAIT   2
-        SSET    vfPeriodAdd,     0FDADh
-        SWAIT   1
-        SSET    vfPeriodAdd,     0
-        SWAIT   2
-        SSET    vfPeriodAdd,     1F4h
-        SWAIT   1
+        SSET    vfPeriod,        3E8h
+        SWAIT   7
+        SSET    vfPeriod,        379h
+        SWAIT   7
         SLOOP   vfLoopCounterA,  tuneA01_v0_loop
         SSET    vfLevel,         0
         SWAIT   0
@@ -3234,9 +3225,9 @@ InstallSoundTimer:
         mov     ax, 2508h               ; DOS set-vector, INT 8
         int     21h
         pop     ds
-        mov     al, 0B6h                ; selects ch2, lo/hi byte, mode 3
+        mov     al, 0B6h                ; PIT control selects ch2, lo/hi byte, mode 3
         out     43h, al
-        mov     ax, 13B1h               ; divisor written to ch0 despite ch2 selection above
+        mov     ax, 13B1h               ; divisor sent to ch0; its control mode is unchanged
         out     40h, al
         mov     al, ah
         out     40h, al
@@ -3255,7 +3246,7 @@ UninstallSoundTimer:
         mov     ax, 2508h               ; put the displaced handler back
         int     21h
         pop     ds
-        mov     ax, 0FFFFh              ; write ch0 divisor without a new control word
+        mov     ax, 0FFFFh              ; restore ch0 reload value; its mode is unchanged
         out     40h, al
         mov     al, ah
         out     40h, al
@@ -3273,8 +3264,9 @@ UninstallSoundTimer:
         pop     ds
         retf
 
-; seqBusy suppresses reentrant voice work while interrupts are enabled. The local return
-; sends EOI; every thirteenth tick chains to the saved handler for timer service.
+; The timer ISR.  It runs with interrupts on, so seqBusy and not the interrupt flag
+; is what keeps it out of the voice writers.  The EOI goes out before any work, so
+; the BIOS handler's own EOI on the 13th tick is a second one.
 P_isr:
         sti
         push    ax
@@ -3282,6 +3274,8 @@ P_isr:
         push    dx
         push    ds
         push    si
+        mov     al, 20h                 ; EOI to the 8259
+        out     20h, al
         mov     ax, CODE
         mov     ds, ax
         cmp     byte ptr cs:[seqBusy], 0
@@ -3292,17 +3286,15 @@ P_isr:
         mov     byte ptr cs:[seqBusy], 0
 isr_div:
         dec     byte ptr cs:[divCount]
-        jnz     isr_eoi
-        mov     byte ptr cs:[divCount], 13      ; divide timer service by thirteen
+        jnz     isr_done
+        mov     byte ptr cs:[divCount], 13      ; chain the saved handler every 13 ticks
         pop     si
         pop     ds
         pop     dx
         pop     bx
         pop     ax
         jmp     dword ptr cs:[oldInt8Off]
-isr_eoi:
-        mov     al, 20h                 ; EOI to the 8259
-        out     20h, al
+isr_done:
         pop     si
         pop     ds
         pop     dx
@@ -3315,7 +3307,7 @@ isr_eoi:
 ; once spkrVoice is set the rest of the pass cannot claim it.
 tick_spkr:
         mov     bx, cs:[curTune]
-        cmp     bx, SilentTune
+        cmp     bx, 0
         jz      spkr_set
         mov     word ptr cs:[spkrVoice], 0
         mov     byte ptr cs:[voiceLeft], 4
@@ -3363,7 +3355,7 @@ spkr_set:
 ; the noise voice, which takes no second period byte.
 tick_tandy:
         mov     bx, cs:[curTune]
-        cmp     bx, SilentTune
+        cmp     bx, 0
         jz      tandy_off
         mov     byte ptr cs:[voiceLeft], 4
         mov     si, offset tandyFreq
@@ -3639,8 +3631,8 @@ sn_tail:
 sn_more:
         jmp     seq_end
 
-; Load nonzero song pointers and arm those voices for the next tick; zero pointers
-; preserve their blocks. seqBusy keeps the ISR out during either voice writer.
+; Start a tune: clear each voice block that the tune gives a stream for, point it
+; at that stream and arm it to step on the next tick.  seqBusy keeps the ISR out.
 ProgramSpeakerVoices:
         push    bp
         mov     bp, sp
@@ -3750,9 +3742,6 @@ SetSoundOutputEnabled:
         pop     ax
         pop     bp
         retf
-
-; Unused zero bytes after the last routine.
-        db      000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h,000h
 
 CODE    ENDS
         END

@@ -5,14 +5,14 @@ unit GameBoot;
 
 interface
 
-uses Types, C_Sound, GDConsts, GDVars, Crt, Dos, Overlay, DaxIo, GameIo, Video, SoundDrv;
+uses Types, C_Sound, GDConsts, GDVars, Crt, Dos, Overlay, DaxIo, GameIo, TextRend, Blit, SoundDrv;
 
 implementation
 
 const
   { graphics memory reserve: 16 KB in paragraphs }
   GFX_RESERVE_PARAS = 1024;
-  OVERLAY_BUF_BYTES = 114688;
+  OVERLAY_BUF_BYTES = 100352;
 
 type
   TFreePtrW = record
@@ -56,7 +56,11 @@ begin
   case GDVars.cfgChar of
     'E': begin
       GDVars.videoMode := Types.Ega;
-      Video.SetVideoMode(13);
+      Blit.SetVideoMode(13);
+      GDVars.pageMain := 0;
+      GDVars.pageNum := 0;
+      TextRend.SetupEgaCurrentPage(GDVars.pageMain);
+      TextRend.SetupEgaOtherPage(GDVars.pageNum);
     end;
     'T': begin
       GDVars.videoMode := Types.Tandy;
@@ -65,22 +69,22 @@ begin
       GDVars.gfxRelocDest := Ptr(freePtrW.s - GameBoot.GFX_RESERVE_PARAS, freePtrW.o);
       Move(freeRangeHead^, GDVars.gfxRelocDest^, SizeOf(Types.TFreeRange));
       FreePtr := GDVars.gfxRelocDest;
-      Video.SetVideoMode(9);
+      Blit.SetVideoMode(9);
     end;
     else begin
       GDVars.videoMode := Types.Cga;
-      Video.SetVideoMode(4);
+      Blit.SetVideoMode(4);
     end;
   end;
   if GameBoot.OVERLAY_BUF_BYTES - OvrGetBuf <= MemAvail then
     OvrSetBuf(GameBoot.OVERLAY_BUF_BYTES)
   else begin
-    Video.RestoreVideoMode;
+    Blit.RestoreVideoMode;
     WriteLn('Not enough memory to run game.  You need ', GameBoot.OVERLAY_BUF_BYTES - OvrGetBuf, ' more bytes.');
     Halt;
   end;
   if OvrResult <> 0 then begin
-    Video.RestoreVideoMode;
+    Blit.RestoreVideoMode;
     WriteLn('Overlay error, program abort!');
     Halt;
   end;

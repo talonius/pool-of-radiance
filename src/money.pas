@@ -4,22 +4,22 @@ unit Money;
 
 interface
 
-uses Types, MenuCore, Crt, C_Npc, GDConsts, GDVars, GameIo, TextRend, Border, CharHlp, FxEngine,
-  C_Keys, C_Ifc, C_Money;
+uses Types, Crt, C_Npc, GDConsts, GDVars, MenuCore, GameIo, TextRend, Border, CharHlp, FxEngine, C_Keys,
+  C_Ifc, C_Money;
 
-{ Gives the most weight a character can carry: its weight allowance plus 1500.
+{ Works out how many coins of weight a character can carry: its weight allowance plus 1500.
   @param(p The character.)
-  @returns(The capacity.) }
+  @returns(The carrying capacity.) }
 function CarryingCapacity(p: Types.PCharRecord): Word;
 
 { Takes weight off a character's encumbrance.
   @param(p The character.)
-  @param(w The weight removed.) }
+  @param(w The weight.) }
 procedure RemoveWeight(p: Types.PCharRecord; w: Word);
 
 { Adds weight to a character's encumbrance.
   @param(p The character.)
-  @param(w The weight added.) }
+  @param(w The weight.) }
 procedure AddWeight(p: Types.PCharRecord; w: Word);
 
 { Tells whether carrying more coins would overload a character.
@@ -29,11 +29,10 @@ procedure AddWeight(p: Types.PCharRecord; w: Word);
   @returns(True when the coins would exceed the character's capacity.) }
 function CheckOverload(p: Types.PCharRecord; w: Word; var takable: Word): Boolean;
 
-{ Moves the money of each player character, and of each NPC with the value $B3, into the pool, taking its weight off,
-  and marks the pool as holding money. }
+{ Pools the money of each party member that is not an NPC, or is an animated member, and sets treasureMoneyFlag. }
 procedure PoolMoney;
 
-{ Counts the party members and animated creatures (NPC value 0 or $B3).
+{ Counts the party members whose money PoolMoney pools.
   @returns(The count.) }
 function CountPoolers: Byte;
 
@@ -49,7 +48,7 @@ procedure ShareMoney;
   only after a take, not when the menu is left. }
 procedure TakeMoneyMenu;
 
-{ Gives platinum to the current character; what does not fit goes to the pooled money, with a message on the bottom row.
+{ Gives platinum to the current character; what does not fit goes to the pooled money.
   @param(pp The platinum pieces.) }
 procedure GivePlatinum(pp: Word);
 
@@ -61,13 +60,12 @@ procedure GivePlatinum(pp: Word);
   @returns(The money type.) }
 function ParseMoneyType(s: String; var typeName: String): ShortInt;
 
-{ Shows a question on the bottom row and reads a number up to the largest accepted: digits are echoed in white, a larger
-  number is cut to the largest, and backspace takes off the last digit. Enter or Escape ends the input. Note: backspace
-  blanks the column after the last digit, so the digit taken off stays on screen.
-  @param(max The largest number accepted.)
-  @param(query The question shown.)
-  @param(color The question's color.)
-  @returns(The number, or 0 on Escape.) }
+{ Reads an amount on the bottom row after a prompt: digits, Backspace, Enter and Escape are taken, and the amount is
+  held to the maximum as digits are typed.
+  @param(max The largest amount.)
+  @param(query The prompt.)
+  @param(color The prompt's color.)
+  @returns(The amount; 0 for Escape.) }
 function InputNumberMax(max: Word; query: Types.TStr40; color: Byte): Word;
 
 { Moves coins of one type from one character to another when the receiver can carry them, and otherwise says it is
@@ -196,7 +194,7 @@ var
   takable: Word;
 begin
   if Money.CheckOverload(GDVars.curChar, pp, takable) then begin
-    CharHlp.PrintBottomLine('Overloaded.  Money will be put in pool.');
+    CharHlp.PrintBottomLine('Overloaded.  Money will be put in Pool.');
     Inc(GDVars.curChar^.coins[C_Money.PLATINUM], takable);
     Money.AddWeight(GDVars.curChar, takable);
     GDVars.treasureMoney[C_Money.PLATINUM] := pp + GDVars.treasureMoney[C_Money.PLATINUM] - takable;
@@ -384,8 +382,9 @@ begin
     GDVars.treasureMoney[mType] := GDVars.treasureMoney[mType] + qty;
 end;
 
-{ Takes coins of one type from the pooled money for a character, without checking the pool's amount. The whole take is
-  refused, the character overloaded, when the amount would overload it; there is no partial take.
+{ Takes coins of one type from the pooled money for a character; an amount above the pool is cut to the pool's low word.
+  The whole take is refused, the character overloaded, when the amount asked for would overload it; there is no partial
+  take.
   @param(p The character.)
   @param(qty The amount.)
   @param(mType The money type.) }
@@ -396,6 +395,8 @@ begin
   if Money.CheckOverload(p, qty, takable) then
     CharHlp.PrintBottomLine('Overloaded')
   else begin
+    if qty > GDVars.treasureMoney[mType] then
+      qty := treasureMoneyLo[mType].lo;
     GDVars.treasureMoney[mType] := GDVars.treasureMoney[mType] - qty;
     p^.coins[mType] := p^.coins[mType] + qty;
     Money.AddWeight(p, qty);
@@ -412,13 +413,13 @@ begin
   case s[i] of
     'G': if UpCase(s[i + 1]) = 'E' then begin
            ParseMoneyType := C_Money.GEMS;
-           typeName := 'gems ';
+           typeName := 'Gems ';
          end else begin
-           typeName := 'gold ';
+           typeName := 'Gold ';
            ParseMoneyType := C_Money.GOLD;
          end;
     'P': begin
-           typeName := 'platinum ';
+           typeName := 'Platinum ';
            ParseMoneyType := C_Money.PLATINUM;
          end;
     'E': begin
@@ -430,11 +431,11 @@ begin
            ParseMoneyType := C_Money.SILVER;
          end;
     'C': begin
-           typeName := 'copper ';
+           typeName := 'Copper ';
            ParseMoneyType := C_Money.COPPER;
          end;
     'J': begin
-           typeName := 'jewelry ';
+           typeName := 'Jewelry ';
            ParseMoneyType := C_Money.JEWELRY;
          end;
   end;
@@ -776,7 +777,7 @@ begin
   ok := True;
   if (GDVars.curChar^.coins[C_Money.GEMS] = 0) and
       (GDVars.curChar^.coins[C_Money.JEWELRY] = 0) then begin
-    CharHlp.PrintBottomLine('No gems or jewelry');
+    CharHlp.PrintBottomLine('No Gems or Jewelry');
     ok := False;
   end else
     repeat
@@ -793,8 +794,8 @@ begin
         end;
         case GDVars.curChar^.coins[C_Money.JEWELRY] of
           0: jwlStr := '';
-          1: jwlStr := jwlStr + ' piece of jewelry';
-          else jwlStr := jwlStr + ' pieces of jewelry';
+          1: jwlStr := jwlStr + ' piece of Jewelry';
+          else jwlStr := jwlStr + ' pieces of Jewelry';
         end;
         TextRend.ClearRect(1, 1, 38, 22);
         CharHlp.DisplayCreatureName(GDVars.curChar, 1, 1, False);
@@ -822,7 +823,7 @@ begin
                 100: value := 5000;
               end;
               Str(value, gemStr);
-              gemStr := 'The gem is valued at ' + gemStr + ' gp.';
+              gemStr := 'The Gem is Valued at ' + gemStr + ' gp.';
               TextRend.DisplayString(1, 12, White, gemStr);
               if Money.CheckOverload(GDVars.curChar, 1, takable)
                  or (GDVars.curChar^.numberOfItems >= 16) then begin
@@ -873,7 +874,7 @@ begin
                 91..100: value := Trunc(Random(10000)) + 2000;
               end;
               Str(value, jwlStr);
-              gemStr := 'The jewel is valued at ' + jwlStr + ' gp.';
+              gemStr := 'The Jewel is Valued at ' + jwlStr + ' gp.';
               TextRend.DisplayString(1, 12, White, gemStr);
               if Money.CheckOverload(GDVars.curChar, 1, takable)
                  or (GDVars.curChar^.numberOfItems >= 16) then begin

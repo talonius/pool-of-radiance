@@ -5,7 +5,7 @@ unit Portrait;
 
 interface
 
-uses Types, Blit, Crt, GDConsts, GDVars, DaxIo, GameIo, Border;
+uses Types, Crt, GDConsts, GDVars, Blit, DaxIo, GameIo, Border;
 
 { Empty routine with no callers. }
 procedure NoopPortrait;
@@ -31,10 +31,11 @@ procedure DisplayPortraitHead(col, row: Byte; pic: Types.PImgBuf);
 procedure DisplayPortraitBody(col, row: Byte; pic: Types.PImgBuf);
 
 { Loads a picture of <name><disk>.DAX into an animation record, unless that picture is the one last loaded, which it
-  then keeps. Picture 1 of PIC is capped at four frames. PIC and FINAL frames after the first are stored as XOR
-  differences from the first. An odd transp remaps light magenta to black outside CGA. Pending keys are discarded
-  afterwards. Note: the XOR buffer is freed after every PIC or FINAL load, even one with no frames, which never
-  allocated it.
+  then keeps. Picture 1 of PIC is capped at four frames. A frame is loaded only while at least 3900 bytes of heap are
+  free in one block, and the frame count becomes the number loaded. PIC and FINAL frames after the first are stored as
+  XOR differences from the first. An odd transp remaps light magenta to black outside CGA. Pending keys are discarded
+  afterwards. Note: a skipped frame's data after its 8-byte header is not stepped over, so the frames after it are read
+  from the wrong offset.
   @param(name The file name, without the disk number.)
   @param(picId The block of the file that holds the picture.)
   @param(transp Bit 0 set to give each frame a transparency mask and the light magenta remap.)
@@ -49,11 +50,10 @@ procedure FreeAnimation(var a: Types.TAnimRec);
   mapped through the head and body tables. Nothing is drawn when either number is 0. }
 procedure DisplayCharPortrait;
 
-{ Draws the loaded portrait head straight to the screen at a character cell and, when asked, the body five character
-  rows below it.
-  @param(col Character column of the head.)
-  @param(row Character row of the head.)
-  @param(both True to draw the body as well, False for the head alone.) }
+{ Draws the cached portrait straight to the screen.
+  @param(col Column of the portrait's upper-left character cell.)
+  @param(row Row of the portrait's upper-left character cell.)
+  @param(both True for the head and the body, False for the head alone.) }
 procedure DisplayPortraitBufs(col, row: Byte; both: Boolean);
 
 { Loads a head from HEAD<disk>.DAX and a body from BODY<disk>.DAX into the portrait cache, skipping a picture that is
@@ -107,7 +107,7 @@ var
   j: Word;
   planeSz: Word;
   isPic: Boolean;
-  { Unused in this version; see the other implementations of this routine. }
+  gotXor: Boolean;
   loaded: Byte;
 begin
   if (name = GDVars.picArcName) and (picId = GDVars.picArcId) then Exit;
@@ -119,12 +119,14 @@ begin
   DaxIo.LoadDax(name + diskCh, '.dax', picId, sz, buf);
   if sz = 0 then Exit;
   offset := 0;
+  gotXor := False;
   with a do begin
     count := buf^[offset];
     if (name = 'PIC') and (picId = 1) then
       if count > 4 then count := 4;
     Inc(offset);
     current := 1;
+    loaded := 0;
     for f := 1 to count do begin
       Move(buf^[offset], frames[f].time, SizeOf(frames[f].time));
       Inc(offset, SizeOf(frames[f].time));
@@ -132,33 +134,38 @@ begin
       Inc(offset, SizeOf(h));
       Move(buf^[offset], w, SizeOf(w));
       Inc(offset, SizeOf(w));
-      Blit.AllocPic(h, w, 1, transp, frames[f].pic);
-      with frames[f].pic^ do begin
-        Move(buf^[offset], originX, SizeOf(originX));
-        Inc(offset, SizeOf(originX));
-        Move(buf^[offset], originY, SizeOf(originY));
-        Inc(offset, SizeOf(originY) + SizeOf(count));
-        Move(buf^[offset], map, SizeOf(map));
-        Inc(offset, SizeOf(map));
+      if MaxAvail >= 3900 then begin
+        Inc(loaded);
+        Blit.AllocPic(h, w, 1, transp, frames[f].pic);
+        with frames[f].pic^ do begin
+          Move(buf^[offset], originX, SizeOf(originX));
+          Inc(offset, SizeOf(originX));
+          Move(buf^[offset], originY, SizeOf(originY));
+          Inc(offset, SizeOf(originY) + SizeOf(count));
+          Move(buf^[offset], map, SizeOf(map));
+          Inc(offset, SizeOf(map));
+        end;
+        if GDVars.videoMode = Types.Cga then
+          planeSz := frames[f].pic^.imgSize * 2 - 1
+        else
+          planeSz := frames[f].pic^.imgSize - 1;
+        if isPic then
+          if f = 1 then begin
+            GetMem(xorBuf, planeSz + 1);
+            Move(buf^[offset], xorBuf^, planeSz + 1);
+            gotXor := True;
+          end else
+            for j := offset to offset + planeSz do
+              buf^[j] := buf^[j] xor xorBuf^[j - offset];
+        Blit.ExpandPicFrames(buf, offset, Boolean(transp), 0, frames[f].pic);
+        if (transp and 1 > 0) and (GDVars.videoMode <> Types.Cga) then
+          Blit.RemapPic(GDConsts.animRemapFrom, GDConsts.animRemapTo, 0, False, frames[f].pic);
+        Inc(offset, planeSz + 1);
       end;
-      if GDVars.videoMode = Types.Cga then
-        planeSz := frames[f].pic^.imgSize * 2 - 1
-      else
-        planeSz := frames[f].pic^.imgSize - 1;
-      if isPic then
-        if f = 1 then begin
-          GetMem(xorBuf, planeSz + 1);
-          Move(buf^[offset], xorBuf^, planeSz + 1);
-        end else
-          for j := offset to offset + planeSz do
-            buf^[j] := buf^[j] xor xorBuf^[j - offset];
-      Blit.ExpandPicFrames(buf, offset, Boolean(transp), 0, frames[f].pic);
-      if (transp and 1 > 0) and (GDVars.videoMode <> Types.Cga) then
-        Blit.RemapPic(GDConsts.animRemapFrom, GDConsts.animRemapTo, 0, False, frames[f].pic);
-      Inc(offset, planeSz + 1);
     end;
+    count := loaded;
   end;
-  if isPic then FreeMem(xorBuf, planeSz + 1);
+  if isPic and gotXor then FreeMem(xorBuf, planeSz + 1);
   FreeMem(buf, sz);
   GameIo.DiscardPendingKeys;
 end;

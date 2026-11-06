@@ -4,7 +4,7 @@ unit GameIo;
 
 interface
 
-uses C_Sound, GDConsts, GDVars, Crt, SoundDrv, Video;
+uses C_Sound, GDConsts, GDVars, Crt, Dos, SoundDrv;
 
 { Reads a key and acts on the control keys in its first byte: Ctrl-S toggles the sound, and when the first command-line
   argument is STING, Ctrl-D toggles the hit-point display and Ctrl-C exits to DOS. After a nonzero byte it drains the
@@ -13,15 +13,14 @@ uses C_Sound, GDConsts, GDVars, Crt, SoundDrv, Video;
   @returns(The last byte read.) }
 function ReadGameKey: Char;
 
-{ Process pending keys through ReadGameKey until the keyboard buffer is empty. }
+{ Disabled: return at once without polling the keyboard. The polling loop is kept but unreachable. }
 procedure DiscardPendingKeys;
 
 { If input is pending, call ReadGameKey once and discard its result. That call may consume several bytes or leave an
   extended scan byte pending. }
 procedure PollGameKeys;
 
-{ Restore the saved sound mode, send the stop command, restore the video mode through Video.RestoreVideoMode and exit to
-  DOS. }
+{ Restore the saved sound mode, send the stop command, set the saved video mode through the BIOS and exit to DOS. }
 procedure ExitGame;
 
 implementation
@@ -30,7 +29,9 @@ procedure ExitGame;
 begin
   GDVars.soundMode := GDVars.soundSaved;
   SoundDrv.SoundCommand(GDConsts.soundIds.commands[0]);
-  Video.RestoreVideoMode;
+  GDVars.interruptRegs.ah := 0;
+  GDVars.interruptRegs.al := GDVars.savedVideoMode;
+  Intr($10, Registers(GDVars.interruptRegs));
   Halt(0);
 end;
 
@@ -66,6 +67,8 @@ var
   { Unused in this version; see the other implementations of this routine. }
   key: Char;
 begin
+  { Polling is disabled; the loop below is unreachable. }
+  Exit;
   while KeyPressed do
     key := GameIo.ReadGameKey;
 end;

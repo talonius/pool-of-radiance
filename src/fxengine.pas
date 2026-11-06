@@ -34,12 +34,12 @@ procedure TriggerEffectsWithCondition(cond: Byte; creature: Types.PCharRecord);
   @param(creature The creature.) }
 procedure ConsiderTerrainEffects(creature: Types.PCharRecord);
 
-{ Rolls an attack that has no attacking creature: a d20, where 1 always misses and 20 counts as 100, adjusted by the
-  defender's condition-16 effects.
-  @param(defender Creature attacked.)
-  @param(sixtyMinusThac0 The attack's to-hit value, 60 minus its THAC0.)
-  @returns(True when the adjusted roll is not negative and the roll plus the to-hit value exceeds the defender's armor
-    class.) }
+{ Rolls an attack that has no attacking creature, as ECL script attacks have. The d20 goes into attackRoll: 1 misses and
+  20 becomes 100. Then the defender's attack-roll defense effects run.
+  @param(defender The creature attacked.)
+  @param(sixtyMinusThac0 The attack's 60 minus THAC0.)
+  @returns(True on a hit: the roll still at least 0 and the roll plus sixtyMinusThac0 above the defender's armor
+  class.) }
 function AttackRollNoAttacker(defender: Types.PCharRecord; sixtyMinusThac0: Byte): Boolean;
 
 { Rolls an attack. The attacker loses its invisibility, and the d20 goes into attackRoll: 1 misses and 20 becomes 100.
@@ -61,16 +61,16 @@ function AttackRoll(attacker, defender: Types.PCharRecord; sixtyMinusAc: Byte): 
   @returns(True when the save succeeds.) }
 function RollSavingThrow(creature: Types.PCharRecord; saveType, modifier: ShortInt): Boolean;
 
-{ Rolls a number of dice and adds them up.
-  @param(n Number of dice; 0 rolls nothing.)
-  @param(sides Faces per die.)
-  @returns(The sum, kept in a Byte, so a total above 255 wraps.) }
+{ Rolls dice.
+  @param(n The number of dice.)
+  @param(sides The sides of each die.)
+  @returns(The total, 0 when n is 0. Note: the total is a Byte and wraps past 255.) }
 function RollDice(n, sides: Byte): Byte;
 
-{ Rolls damage dice, recording the number of dice for the resistances.
-  @param(n Number of dice.)
-  @param(sides Faces per die.)
-  @returns(The sum, as RollDice returns it.) }
+{ Rolls damage dice, keeping the number of dice in damageDice; pendingDamage is not set.
+  @param(n The number of dice.)
+  @param(sides The sides of each die.)
+  @returns(The total.) }
 function RollDamageDice(n, sides: Byte): Byte;
 
 { Adds an effect node to the end of a creature's effect list. It neither checks for a node already there nor calls the
@@ -90,7 +90,7 @@ procedure AddEffect(creature: Types.PCharRecord; effId: Byte; minutes: Word; str
   @param(msg The message.) }
 procedure PutOutOfPlayWithStatus(creature: Types.PCharRecord; status: Byte; msg: Types.TStr40);
 
-{ Removes each invisibility effect from a creature.
+{ Removes each invisibility node from a creature.
   @param(creature The creature.) }
 procedure RemoveInvisibility(creature: Types.PCharRecord);
 
@@ -108,11 +108,10 @@ procedure RemoveAiEffects(creature: Types.PCharRecord);
   @returns(True when the creature had the effect.) }
 function RemoveEffectWithMessage(creature: Types.PCharRecord; effId: Byte): Boolean;
 
-{ Encodes a Strength as an effect strength: 18 with exceptional Strength becomes the exceptional value + 1 (1..101), any
-  other base Strength becomes the base + 100.
-  @param(baseStr Base Strength.)
-  @param(excStr Exceptional Strength, read when the base Strength is 18.)
-  @returns(The encoded Strength.) }
+{ Encodes Strength as an effect's strength byte. Bit 7 is left for the caller's superseded mark.
+  @param(baseStr Strength.)
+  @param(excStr Exceptional Strength, read for Strength 18.)
+  @returns(excStr + 1 for Strength 18, otherwise Strength + 100.) }
 function StrengthModifier(baseStr, excStr: Byte): Byte;
 
 { Decodes an effect's strength byte, bit 7 aside, into Strength: up to 101 is Strength 18 with exceptional Strength of
@@ -735,8 +734,6 @@ procedure AddEffectWithMessage(creature: Types.PCharRecord; effId: Byte; minutes
                                saveNegates, saved: Boolean; msg: Types.TStr40);
 var
   effect: Types.PEffectRec;
-  { Unused in this version; see the other implementations of this routine. }
-  oldEffect: Byte;
 begin
   GDVars.pendingEffectId := effId;
   FxEngine.TriggerEffectsWithCondition(FxEngine.COND_EFFECT_IMMUNITY, creature);

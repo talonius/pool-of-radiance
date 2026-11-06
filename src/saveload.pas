@@ -6,7 +6,7 @@ unit SaveLoad;
 
 interface
 
-uses Types, Blit, Crt, C_Area, GDConsts, GDVars, TextRend, DaxIo, GameIo, MenuCore, Ending,
+uses Types, Crt, C_Area, GDConsts, GDVars, Blit, TextRend, DaxIo, GameIo, MenuCore, Ending,
   ClassCal, FxEngine, View3D, MapTiles, C_Race, C_Keys, C_Class, C_Ifc, C_Gbvm;
 
 { Reads CHARLIST.TXT in the save directory into a new list of menu entries, each allocated with only the name, inUse and
@@ -74,7 +74,7 @@ procedure LoadGame;
 procedure SaveGame;
 
 { Appends a character to the party and makes it the current character. It takes the lowest free icon slot (0 to 7) and
-  the GBVM party size goes up. Its class values are recomputed.
+  the GBVM party size goes up. An NPC also has its class values recomputed.
   @param(creature The character.) }
 procedure AddCharToParty(creature: Types.PCharRecord);
 
@@ -274,6 +274,7 @@ begin
   Close(f);
   if DaxIo.FileExists(fn + '.itm') then begin
     Assign(f, fn + '.itm');
+    Close(f);
     Erase(f);
   end;
   if creature^.itemsAddr <> nil then begin
@@ -288,6 +289,7 @@ begin
   end;
   if DaxIo.FileExists(fn + '.spc') then begin
     Assign(f, fn + '.spc');
+    Close(f);
     Erase(f);
   end;
   if creature^.effectsAddr <> nil then begin
@@ -480,15 +482,15 @@ var
   used: array[0..7] of Byte;
 begin
   creature^.orderNumber := 255;
-  if GDVars.creatureList = nil then begin
-    GDVars.creatureList := creature;
-    GDVars.curChar := creature;
-  end else begin
+  if GDVars.creatureList = nil then
+    GDVars.creatureList := creature
+  else begin
     p := GDVars.creatureList;
     while p^.nextCharAddr <> nil do
       p := p^.nextCharAddr;
     p^.nextCharAddr := creature;
   end;
+  GDVars.curChar := creature;
   FillChar(used, SizeOf(used), 0);
   p := GDVars.creatureList;
   while p <> nil do begin
@@ -496,14 +498,15 @@ begin
       used[p^.orderNumber] := 1;
     p := p^.nextCharAddr;
   end;
-  GDVars.curChar := creature;
   with GDVars.curChar^ do begin
     orderNumber := 0;
     while (orderNumber < 8) and (used[orderNumber] <> 0) do
       Inc(orderNumber);
   end;
   Inc(GDVars.zone1^[C_Gbvm.PARTY_SIZE]);
-  ClassCal.RecalcClassStats(creature);
+  { C_Npc.NON_PLAYER set }
+  if creature^.npc > $7F then
+    ClassCal.RecalcClassStats(creature);
 end;
 
 procedure LoadGame;
@@ -567,13 +570,16 @@ begin
     { The .itm and .spc files are erased only when the .cha file exists. }
     if DaxIo.FileExists(fn + '.cha') then begin
       Assign(f, fn + '.cha');
+      Close(f);
       Erase(f);
       if DaxIo.FileExists(fn + '.itm') then begin
         Assign(f, fn + '.itm');
+        Close(f);
         Erase(f);
       end;
       if DaxIo.FileExists(fn + '.spc') then begin
         Assign(f, fn + '.spc');
+        Close(f);
         Erase(f);
       end;
     end;
@@ -666,14 +672,17 @@ begin
     fn := GDVars.saveDir + DaxIo.SanitizeFileName(DaxIo.SanitizeString(p^.name, '.'));
     if DaxIo.FileExists(fn + '.cha') then begin
       Assign(f, fn + '.cha');
+      Close(f);
       Erase(f);
     end;
     if DaxIo.FileExists(fn + '.itm') then begin
       Assign(f, fn + '.itm');
+      Close(f);
       Erase(f);
     end;
     if DaxIo.FileExists(fn + '.spc') then begin
       Assign(f, fn + '.spc');
+      Close(f);
       Erase(f);
     end;
     p := p^.nextCharAddr;

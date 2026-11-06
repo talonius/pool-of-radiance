@@ -6,7 +6,7 @@ interface
 
 uses Types, GDConsts, GDVars, CbtMap, C_Dir;
 
-{ Gives the sign of a number.
+{ Finds the sign of a number.
   @param(v The number.)
   @returns(-1, 0 or 1.) }
 function SignOf(v: Integer): Integer;
@@ -46,9 +46,8 @@ function IsDirToward(x, y, tx, ty: ShortInt; dir: Byte): Boolean;
 function WalkLine(x, y: ShortInt; var tx, ty: ShortInt; var dist: Word; view: Types.PArena): Boolean;
 
 { Builds the target list from an icon's position: each combatant with an icon on the arena is a target when a line from
-  a tile of the icon reaches a tile of its icon within range, in the required direction. Each target keeps its shortest
-  doubled distance and a direction toward it: the required direction itself when it is 0 to 7, otherwise the lowest
-  direction that leads from the best pair of tiles. The list is then sorted by distance.
+  a tile of the icon reaches a tile of its icon within range, in the filter's direction. Each target keeps its shortest
+  doubled distance and the lowest direction toward it, and the list is sorted by distance.
   @param(x Arena column of the icon's upper-left cell.)
   @param(y Arena row of the icon's upper-left cell.)
   @param(range The range in cells.)
@@ -57,8 +56,8 @@ function WalkLine(x, y: ShortInt; var tx, ty: ShortInt; var dist: Word; view: Ty
   @param(view The arena.) }
 procedure BuildTargetList(x, y: ShortInt; range: Word; filter: Byte; size: Byte; view: Types.PArena);
 
-{ Sorts the target list nearest first; on equal distance a lower direction goes first unless it is diagonal and the
-  other is not. }
+{ Sorts the target list by doubled distance, nearest first. On a tie, a later target moves ahead only when its direction
+  is lower and it does not put a diagonal (odd) direction ahead of a cardinal (even) one. }
 procedure SortTargets;
 
 implementation

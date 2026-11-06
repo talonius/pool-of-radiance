@@ -12,12 +12,8 @@ var
   eclStop: Byte;
   { Set by NEWECL; the game loop then calls NewEclDone. }
   newEclFlag: Byte;
-  { Monsters added by LOAD MONSTER since CLEAR MONSTERS; LOAD MONSTER stops adding at 63. }
-  creatureCnt: Byte;
   { Set by LOAD CHARACTER, so that curChar is restored from savedChar afterwards. }
   restoreChar: Byte;
-  { The current character saved before a script step or LOAD CHARACTER, restored into curChar afterwards. }
-  savedChar: Types.PCharRecord;
   { Set once LOAD FILES or LOAD PIECES has run, whether or not the load succeeded. }
   filesLoaded: Byte;
   { Set while the first LOAD FILES and LOAD PIECES pair of an area still has to draw the interface. }
@@ -26,6 +22,10 @@ var
   piecesLoaded: Byte;
   { Set once LOAD FILES has run, whether or not the load succeeded. }
   mapLoaded: Byte;
+  { Monsters added by LOAD MONSTER since CLEAR MONSTERS; LOAD MONSTER stops adding at 63. }
+  creatureCnt: Byte;
+  { The current character saved before a script step or LOAD CHARACTER, restored into curChar afterwards. }
+  savedChar: Types.PCharRecord;
   { Set by DetermineLootExp when it finds a hostile that did not run away; the summary then reports a win. }
   nonEscapedHostileFound: Boolean;
   { Set by DetermineCombatResults when a party member ran and no member is still standing. }
@@ -65,7 +65,7 @@ var
 
 { Start-up resource loading and the STING training override. }
 var
-  { Offset of the next transparency row written into the COMSPR icon mask. }
+  { unused }
   maskIdx: Word;
   { Whether OpenWithRetry found the ITEMS file. }
   itemsOk: Boolean;
@@ -224,6 +224,9 @@ var
   soundMode: Byte;
   { soundMode saved while sound is suspended, so the configured mode is not lost. }
   soundSaved: Byte;
+  { Nonzero makes SoundDrv.SoundCommand wait a fixed delay after each command, then silence the voices and remove its
+    timer; zero leaves the timer driver resident for persistent playback. }
+  soundAutoStop: Word;
   { The resource disk in use; saved with the game. }
   virtualDisk: Byte;
   { The disk DaxIo.PushState saved for PopState. }

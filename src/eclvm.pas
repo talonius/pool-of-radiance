@@ -1,12 +1,12 @@
 { Main game loop and ECL script interpreter. }
-{$O+,F+,I-}
+{$O+,F+}
 unit EclVm;
 
 interface
 
 uses Types, C_Area, C_Npc, C_Msg, GDConsts, GDVars, Crt, Temple, PostCbt, Shop, EclMenu, Combat, Explore,
   Camp, CharGen, SaveLoad, Ending, GameTime, Money, FxEngine, MenuCore, MapView, Portrait, View3D, MapTiles, CharHlp,
-  Border, TextRend, DaxIo, GameIo, SoundDrv, C_Effect, C_Ecl, C_Class, C_Status, C_Ifc, C_Gbvm, C_Sound, C_Money;
+  Border, TextRend, DaxIo, GameIo, SoundDrv, C_Ecl, C_Class, C_Ifc, C_Gbvm, C_Sound, C_Money;
 
 { Main game loop: set the interface state from the previous script id and view3dFlag, load (unless a save was loaded)
   and initialize the ECL script and run its on-load entry, then repeat the map menu, camp, search and movement until the
@@ -37,26 +37,10 @@ const
 
   { ECL script opcodes }
   OP_EXIT = $00;
-  OP_GOTO = $01;
-  GOSUB = $02;
-  COMPARE = $03;
-  ADD = $04;
   SUBTRACT = $05;
   DIVIDE = $06;
-  MULTIPLY = $07;
-  OP_RANDOM = $08;
-  SAVE = $09;
-  LOAD_CHARACTER = $0A;
-  LOAD_MONSTER = $0B;
-  SETUP_MONSTER = $0C;
   APPROACH = $0D;
-  PICTURE = $0E;
-  INPUT_NUMBER = $0F;
-  INPUT_STRING = $10;
-  PRINT = $11;
-  PRINT_CLEAR = $12;
   RETURN = $13;
-  COMPARE_AND = $14;
   VERTICAL_MENU = $15;
   IF_EQ = $16;
   IF_NE = $17;
@@ -65,37 +49,13 @@ const
   IF_LE = $1A;
   IF_GE = $1B;
   CLEAR_MONSTERS = $1C;
-  PARTY_STRENGTH = $1D;
-  CHECK_PARTY = $1E;
-  NEW_ECL = $20;
-  LOAD_FILES = $21;
-  PARTY_SURPRISE = $22;
-  SURPRISE = $23;
   OP_COMBAT = $24;
   ON_GOTO = $25;
   ON_GOSUB = $26;
-  TREASURE = $27;
-  ROB = $28;
-  ENCOUNTER = $29;
-  GET_TABLE = $2A;
   HORIZONTAL_MENU = $2B;
-  PARLAY = $2C;
-  CALL = $2D;
-  DAMAGE = $2E;
-  OP_AND = $2F;
-  OP_OR = $30;
   SPRITE_OFF = $31;
-  FIND_ITEM = $32;
   PRINT_RETURN = $33;
-  CLOCK = $34;
-  SAVE_TABLE = $35;
-  ADD_NPC = $36;
-  LOAD_PIECES = $37;
-  OP_PROGRAM = $38;
-  WHO = $39;
   OP_DELAY = $3A;
-  SPELL = $3B;
-  PROTECTION = $3C;
   CLEAR_BOX = $3D;
 
   { Script-visible game-memory addresses }
@@ -139,22 +99,21 @@ begin
   GDVars.clearBoxDone := 0;
 end;
 
-{ GOTO, opcode $01: jumps to the address in its argument. }
+{ GOTO: jump to var 1's address }
 procedure EclGoto;
 begin
   EclMenu.LoadEclVars(1);
   GDVars.eclIp := EclMenu.CombineBytesToWord(GDVars.eclVarLo[1], GDVars.eclVarHi[1]);
 end;
 
-{ GOSUB, opcode $02: pushes the return address and jumps to the address in its argument. }
+{ GOSUB: push the return address and jump to var 1's address }
 procedure EclGosubCmd;
 begin
   EclMenu.LoadEclVars(1);
   EclMenu.EclGosub(1);
 end;
 
-{ COMPARE, opcode $03: compares its two arguments, as strings when either is a string type ($80 and up), else as
-  integers, and sets the comparison flags. }
+{ COMPARE: set the comparison flags from vars 1 and 2, as strings when either is a string (type bit 7 set) }
 procedure EclCompare;
 var
   firstValue: Word;
@@ -188,16 +147,15 @@ begin
     v[i] := EclMenu.GetEclVar(i);
   address := EclMenu.CombineBytesToWord(GDVars.eclVarLo[3], GDVars.eclVarHi[3]);
   case GDVars.curOpcode of
-    EclVm.ADD: r := v[1] + v[2];
+    C_Ecl.ADD: r := v[1] + v[2];
     EclVm.SUBTRACT: r := v[2] - v[1];
     EclVm.DIVIDE: r := v[1] div v[2];
-    EclVm.MULTIPLY: r := v[1] * v[2];
+    C_Ecl.MULTIPLY: r := v[1] * v[2];
   end;
   EclMenu.WriteGbvm(address, r);
 end;
 
-{ RANDOM, opcode $08: stores a random number from 0 to its first argument (0 to 254 when that is 255) at the address in
-  its second. }
+{ RANDOM: store a random number from 0 to var 1 (0 to 254 when var 1 is 255) at var 2's address }
 procedure EclRandom;
 var
   n: Byte;
@@ -212,7 +170,7 @@ begin
   EclMenu.WriteGbvm(address, roll);
 end;
 
-{ SAVE, opcode $09: stores its first argument, a number or a string (type bit 7 set), at the address in its second. }
+{ SAVE: store var 1, a number or a string (type bit 7 set), at var 2's address }
 procedure EclSave;
 var
   v: Word;
@@ -263,8 +221,8 @@ begin
   end;
 end;
 
-{ SETUP MONSTER, opcode $0C: sets the monster and its picture, stores the requested monster distance and the actual one
-  (capped by the open distance ahead), and draws the monster. }
+{ SETUP MONSTER: set the monster id and picture, store the requested monster distance and the actual one (capped by
+  MaxMonsterDist), then draw the monster }
 procedure EclSetupMonster;
 var
   { Unused in this version; see the other implementations of this routine. }
@@ -375,7 +333,7 @@ begin
   GDVars.curChar := savedCur;
 end;
 
-{ APPROACH, opcode $0D: brings the monster one step nearer and redraws it, unless it is already adjacent. }
+{ APPROACH: bring the monster one step closer and redraw it }
 procedure EclApproach;
 begin
   if GDVars.zone1^[C_Gbvm.MONSTER_DISTANCE] > 0 then begin
@@ -417,7 +375,7 @@ begin
   end;
 end;
 
-{ INPUT NUMBER, opcode $0F: reads a number and stores it at the GBVM address in its second argument. }
+{ INPUT NUMBER: read a number from the player into var 2's address }
 procedure EclInputNumber;
 var
   q: String[1];
@@ -431,8 +389,7 @@ begin
   EclMenu.WriteGbvm(address, v);
 end;
 
-{ INPUT STRING, opcode $10: reads up to 40 characters, a space when nothing is typed, and stores them at the GBVM
-  address in its second argument. }
+{ INPUT STRING: read up to 40 characters into var 2's address; an empty answer is stored as one space }
 procedure EclInputString;
 var
   q: String[1];
@@ -447,8 +404,8 @@ begin
   EclMenu.WriteGbvmString(address, s);
 end;
 
-{ PRINT and PRINTCLEAR, opcodes $11 and $12: shows its argument, a number or a string, in the message window; PRINTCLEAR
-  first clears the window and starts at its top. }
+{ PRINT / PRINTCLEAR: show var 1 (a number is converted to text) in the message window. PRINTCLEAR clears the window and
+  starts at its top. }
 procedure EclPrint;
 begin
   EclMenu.LoadEclVars(1);
@@ -456,14 +413,14 @@ begin
   GDVars.msgDelayFlag := 1;
   if GDVars.eclVarType[1] < $80 then
     GDVars.gbStrings[1] := CharHlp.WordToString(EclMenu.GetEclVar(1));
-  if GDVars.curOpcode = EclVm.PRINT then
-    TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM,
-                                  LightGreen, False, GDVars.gbStrings[1])
+  if GDVars.curOpcode = C_Ecl.PRINT then
+    TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM, LightGreen,
+                                  False, GDVars.gbStrings[1])
   else begin
     GDVars.curRow := C_Msg.MESSAGE_TOP;
     GDVars.curCol := C_Msg.TEXT_LEFT;
-    TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM,
-                                  LightGreen, True, GDVars.gbStrings[1]);
+    TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM, LightGreen,
+                                  True, GDVars.gbStrings[1]);
   end;
   GDVars.msgDelayFlag := 0;
 end;
@@ -480,7 +437,7 @@ begin
   end;
 end;
 
-{ COMPARE AND: sets the equal flag when v1 = v2 and v3 = v4, else the not-equal flag. }
+{ COMPARE AND: set the eq flag when var 1 = var 2 and var 3 = var 4, else the ne flag }
 procedure EclCompareAnd;
 var
   v: array[1..4] of Word;
@@ -496,49 +453,17 @@ begin
     GDVars.cmpFlags[1] := True;
 end;
 
-{ Steps the ECL IP past the command at it without running it, loading the command's variables; an opcode not listed
-  skips one byte. }
-procedure SkipEclCmd;
-begin
-  GDVars.curOpcode := GDVars.zone3^[GDVars.eclIp];
-  case GDVars.curOpcode of
-    EclVm.OP_GOTO, EclVm.GOSUB, EclVm.LOAD_CHARACTER, EclVm.PICTURE, EclVm.PRINT, EclVm.PRINT_CLEAR,
-        EclVm.PARTY_STRENGTH, EclVm.NEW_ECL, EclVm.CALL,
-    EclVm.FIND_ITEM, EclVm.CLOCK, EclVm.ADD_NPC, EclVm.OP_PROGRAM, EclVm.WHO, EclVm.PROTECTION:
-      EclMenu.LoadEclVars(1);
-    EclVm.COMPARE, EclVm.OP_RANDOM, EclVm.SAVE, EclVm.SETUP_MONSTER, EclVm.INPUT_NUMBER, EclVm.INPUT_STRING,
-        $1F, EclVm.PARTY_SURPRISE:
-      EclMenu.LoadEclVars(2);
-    EclVm.ADD..EclVm.MULTIPLY, EclVm.LOAD_MONSTER, EclVm.LOAD_FILES, EclVm.ROB, EclVm.GET_TABLE,
-        EclVm.OP_AND, EclVm.OP_OR, EclVm.SAVE_TABLE,
-    EclVm.LOAD_PIECES, EclVm.SPELL:
-      EclMenu.LoadEclVars(3);
-    EclVm.COMPARE_AND, EclVm.SURPRISE:
-      EclMenu.LoadEclVars(4);
-    EclVm.DAMAGE:
-      EclMenu.LoadEclVars(5);
-    EclVm.CHECK_PARTY, EclVm.PARLAY:
-      EclMenu.LoadEclVars(6);
-    EclVm.TREASURE:
-      EclMenu.LoadEclVars(8);
-    EclVm.ENCOUNTER:
-      EclMenu.LoadEclVars(14);
-  else
-    Inc(GDVars.eclIp);
-  end;
-end;
-
-{ IF, opcodes $16..$1B (=, <>, <, >, <=, >=): skips the next command unless its comparison flag is set. }
+{ IF: skip the next command unless the comparison flag for this opcode is set }
 procedure EclIf;
 begin
   Inc(GDVars.eclIp);
   case GDVars.curOpcode of
-    EclVm.IF_EQ: if not GDVars.cmpFlags[0] then EclVm.SkipEclCmd;
-    EclVm.IF_NE: if not GDVars.cmpFlags[1] then EclVm.SkipEclCmd;
-    EclVm.IF_LT: if not GDVars.cmpFlags[2] then EclVm.SkipEclCmd;
-    EclVm.IF_GT: if not GDVars.cmpFlags[3] then EclVm.SkipEclCmd;
-    EclVm.IF_LE: if not GDVars.cmpFlags[4] then EclVm.SkipEclCmd;
-    EclVm.IF_GE: if not GDVars.cmpFlags[5] then EclVm.SkipEclCmd;
+    EclVm.IF_EQ: if not GDVars.cmpFlags[0] then EclMenu.SkipEclCmd;
+    EclVm.IF_NE: if not GDVars.cmpFlags[1] then EclMenu.SkipEclCmd;
+    EclVm.IF_LT: if not GDVars.cmpFlags[2] then EclMenu.SkipEclCmd;
+    EclVm.IF_GT: if not GDVars.cmpFlags[3] then EclMenu.SkipEclCmd;
+    EclVm.IF_LE: if not GDVars.cmpFlags[4] then EclMenu.SkipEclCmd;
+    EclVm.IF_GE: if not GDVars.cmpFlags[5] then EclMenu.SkipEclCmd;
   end;
 end;
 
@@ -564,7 +489,8 @@ end;
 
 { LOADFILES: load GEO map var 1 when view3dFlag <> 0, or the BACPAC tile set when view3dFlag = 0. LOADPIECES: load the
   wall sets in vars 1..3 (127 loads set 0; with both mapGraphics flags set only vars 1 and 3 are used); otherwise a 255
-  slot is left untouched. Once both have run on entering the main loop, draw the noncombat interface and the party. }
+  slot clears its wall-def cache entry. Once both have run on entering the main loop, draw the noncombat interface and
+  the party. }
 procedure EclLoadFiles;
 var
   f: array[1..3] of Byte;
@@ -574,7 +500,7 @@ begin
   GDVars.filesLoaded := 1;
   for i := 1 to 3 do
     f[i] := EclMenu.GetEclVar(i);
-  if GDVars.curOpcode = EclVm.LOAD_FILES then begin
+  if GDVars.curOpcode = C_Ecl.LOAD_FILES then begin
     GDVars.mapLoaded := 1;
     if (f[1] <> 255) and (f[1] <> 127) and (GDVars.zone0^.view3dFlag <> 0) then begin
       GDVars.zone0^.mapId.value := f[1];
@@ -593,7 +519,11 @@ begin
     end else
       for i := 1 to 3 do
         if f[i] <> 255 then
-          View3D.LoadWallSet(f[i], i);
+          View3D.LoadWallSet(f[i], i)
+        else begin
+          GDVars.wallSetCache[i].wallDefId := -1;
+          GDVars.wallSetCache[i].symbolSlot := -1;
+        end;
   end;
   if (GDVars.enteringLoop <> 0) and (GDVars.piecesLoaded <> 0) and (GDVars.mapLoaded <> 0) then begin
     CharHlp.DisplayNoncombatInterface;
@@ -602,8 +532,8 @@ begin
   end;
 end;
 
-{ AND and OR, opcodes $2F and $30: combines its first two arguments bitwise, truncates the result to a byte, sets the
-  comparison flags as for COMPARE of 0 with the result, and stores it at the address in its third. }
+{ AND / OR: combine vars 1 and 2, truncate the result to a byte, set the comparison flags as for COMPARE 0 with the
+  result, and store it at var 3's address }
 procedure EclAndOr;
 var
   address: Word;
@@ -615,7 +545,7 @@ begin
   firstValue := EclMenu.GetEclVar(1);
   secondValue := EclMenu.GetEclVar(2);
   address := EclMenu.CombineBytesToWord(GDVars.eclVarLo[3], GDVars.eclVarHi[3]);
-  if GDVars.curOpcode = EclVm.OP_AND then
+  if GDVars.curOpcode = C_Ecl.OP_AND then
     r := firstValue and secondValue
   else
     r := firstValue or secondValue;
@@ -623,8 +553,7 @@ begin
   EclMenu.WriteGbvm(address, r);
 end;
 
-{ GETTABLE, opcode $2A: reads the GBVM entry at its first argument's address plus its second and stores it at the
-  address in its third. }
+{ GETTABLE: read the value at var 1's address + var 2 into var 3's address }
 procedure EclGetTable;
 var
   addr1: Word;
@@ -642,7 +571,7 @@ begin
   EclMenu.WriteGbvm(addr2, v);
 end;
 
-{ SAVETABLE, opcode $35: stores its first argument at the GBVM entry at its second argument's address plus its third. }
+{ SAVETABLE: store var 1 at var 2's address + var 3 }
 procedure EclSaveTable;
 var
   idx: Word;
@@ -658,8 +587,8 @@ begin
   EclMenu.WriteGbvm(sum, v);
 end;
 
-{ VERTICAL MENU, opcode $15: shows its message, then a vertical menu of as many strings as its third argument says, and
-  stores the choice at the GBVM address in its first. }
+{ VMENU: show the prompt, then a vertical menu of the var 3 strings that follow, and store the chosen index at var 1's
+  address }
 procedure EclVMenu;
 var
   count: Byte;
@@ -686,8 +615,8 @@ begin
   head := list;
   GDVars.curCol := C_Msg.TEXT_LEFT;
   GDVars.curRow := C_Msg.MESSAGE_TOP;
-  TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM,
-                                LightGreen, True, msg);
+  TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM, LightGreen,
+                                True, msg);
   while list <> nil do begin
     list^.name := GDVars.gbStrings[i];
     list^.inUse := 0;
@@ -696,16 +625,16 @@ begin
   end;
   list := head;
   idx := 0;
-  EclMenu.EclVerticalMenu(q, q, LightMagenta, LightGreen, White, C_Msg.TEXT_LEFT, GDVars.curRow + 1,
-                          C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM, list, False, redraw, idx, list);
+  EclMenu.EclVerticalMenu(q, q, LightMagenta, LightGreen, White, C_Msg.TEXT_LEFT, GDVars.curRow + 1, C_Msg.TEXT_RIGHT,
+                          C_Msg.TEXT_BOTTOM, list, False, redraw, idx, list);
   EclMenu.WriteGbvm(address, idx);
   MenuCore.FreeStringList(list);
   TextRend.ClearRect(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM);
 end;
 
-{ HORIZONTAL MENU, opcode $2B: builds a '~A ~B ~C' horizontal menu from the strings that follow, as many as its second
-  argument says, and stores the chosen index at the address in its first. A single choice also accepts Enter, and the
-  joystick wording of the continue prompt becomes the keyboard wording. }
+{ HMENU: build a '~A ~B ~C' horizontal menu from the var 2 strings that follow and store the chosen index at var 1's
+  address. A single choice also accepts Enter, and the joystick wording of the continue prompt becomes the keyboard
+  wording. }
 procedure EclHMenu;
 var
   count: Byte;
@@ -796,8 +725,7 @@ begin
       th := th - 39
     else
       th := 0;
-    strength := strength + (cleric * 4 + (hp + ac * 5 + th * 5 + mage * 8))
-                 div 10;
+    Inc(strength, (cleric * 4 + (hp + ac * 5 + th * 5 + mage * 8)) div 10);
     p := p^.nextCharAddr;
   end;
   address := EclMenu.CombineBytesToWord(GDVars.eclVarLo[1], GDVars.eclVarHi[1]);
@@ -822,7 +750,7 @@ var
   addr4: Word;
   count: Byte;
 
-  { Stores the three results and the found flag at the four result addresses. }
+  { Store the three results and the found flag at the addresses of vars 3..6 }
   procedure Write4Gbvm;
   begin
     EclMenu.WriteGbvm(addr1, outv[1]);
@@ -887,8 +815,7 @@ begin
   end;
 end;
 
-{ PARTY SURPRISE, opcode $22: stores 1 at its first argument's address when the party holds a ranger or a cleric/ranger,
-  else 0, and 0 at its second's. }
+{ PARTY SURPRISE: store 1 at var 1's address when the party has a ranger, else 0, and 0 at var 2's address }
 procedure EclPartySurprise;
 var
   p: Types.PCharRecord;
@@ -989,8 +916,8 @@ begin
   CharHlp.DisplayNoncombatInterface;
 end;
 
-{ ON GOTO and ON GOSUB, opcodes $25 and $26: jumps to, or calls, the address its first argument picks from the list
-  whose length its second gives; an index past the list does nothing. }
+{ ONGOTO / ONGOSUB: jump to or call address number var 1 of the var 2 addresses that follow; a selector of var 2 or more
+  falls through past the list }
 procedure EclOnGoto;
 var
   sel: Byte;
@@ -1164,35 +1091,8 @@ begin
   end;
 end;
 
-{ Finds the highest and lowest movement in the creature list, haste doubling and otherwise slow halving it. Both start
-  from the first creature's unadjusted movement, so that value always lies within them. Note: the first creature is read
-  before the check for nil, so an empty list is read through nil.
-  @param(hiMove Receives the highest movement.)
-  @param(loMove Receives the lowest movement.) }
-procedure MoveExtremes(var hiMove, loMove: Byte);
-var
-  p: Types.PCharRecord;
-  effect: Types.PEffectRec;
-  m: Byte;
-begin
-  p := GDVars.creatureList;
-  hiMove := p^.movementCur;
-  loMove := p^.movementCur;
-  while p <> nil do begin
-    m := p^.movementCur;
-    if CharHlp.HasEffect(p, C_Effect.HASTED, effect) then
-      m := m * 2
-    else if CharHlp.HasEffect(p, C_Effect.SLOWED, effect) then
-      m := m div 2;
-    if m > hiMove then hiMove := m;
-    if m < loMove then loMove := m;
-    p := p^.nextCharAddr;
-  end;
-end;
-
-{ ENCOUNTER MENU, opcode $29: runs the encounter menu until combat, flight, parley or the monsters' retreat ends it;
-  WAIT and ADVANCE update the encounter and repeat. Stores the outcome at the address in its fourth argument: 0 when the
-  monsters flee, 1 for combat, 2 when the party flees, 3 for parley. }
+{ Run the encounter menu until combat, flight, parley or monster retreat ends it. WAIT and ADVANCE update the encounter
+  and repeat; write the outcome to var 4's address: 0 = monsters flee, 1 = combat, 2 = party flees, 3 = parley }
 procedure EclEncounter;
 var
   sel: Byte;
@@ -1216,7 +1116,7 @@ begin
   GDVars.inEncMenu := 1;
   GDVars.bottomMsgCleared := 0;
   GDVars.msgDelayFlag := 1;
-  EclVm.MoveExtremes(hiMove, loMove);
+  EclMenu.MoveExtremes(hiMove, loMove);
   q := '';
   EclMenu.LoadEclVars(14);
   GDVars.monId := EclMenu.GetEclVar(1);
@@ -1268,8 +1168,8 @@ begin
     end;
     if msg = '' then
       clearW := False;
-    TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM,
-                                  LightGreen, clearW, msg);
+    TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM, LightGreen,
+                                  clearW, msg);
     if (GDVars.zone1^[C_Gbvm.MONSTER_DISTANCE] = 0) or (GDVars.zone0^.view3dFlag = 0) then
       menu := '~COMBAT ~WAIT ~FLEE ~PARLAY'
     else
@@ -1294,7 +1194,8 @@ begin
           1: begin
             waited := True;
             TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM,
-                                          LightGreen, True, 'Both sides wait.');
+                                          LightGreen, True,
+                                          'Both sides wait.');
           end;
           2: EclMenu.WriteGbvm(address, 2);
           3: begin
@@ -1304,7 +1205,8 @@ begin
                                      GDVars.monsterFlags);
             end else
               TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM,
-                                            LightGreen, True, 'Both sides wait.');
+                                            LightGreen, True,
+                                            'Both sides wait.');
             waited := True;
           end;
           4:
@@ -1325,7 +1227,8 @@ begin
               GDVars.curCol := C_Msg.TEXT_LEFT;
               GDVars.curRow := C_Msg.MESSAGE_TOP;
               TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM,
-                                            LightGreen, True, 'The monsters flee.');
+                                            LightGreen, True,
+                                            'The monsters flee.');
             end else
               EclMenu.WriteGbvm(address, 1);
           1..4: begin
@@ -1333,7 +1236,8 @@ begin
             GDVars.curCol := C_Msg.TEXT_LEFT;
             GDVars.curRow := C_Msg.MESSAGE_TOP;
             TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM,
-                                          LightGreen, True, 'The monsters flee.');
+                                          LightGreen, True,
+                                          'The monsters flee.');
           end;
         end;
       3:
@@ -1346,7 +1250,8 @@ begin
                                      GDVars.monsterFlags);
             end else
               TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM,
-                                            LightGreen, True, 'Both sides wait.');
+                                            LightGreen, True,
+                                            'Both sides wait.');
             waited := True;
           end;
           2: EclMenu.WriteGbvm(address, 2);
@@ -1381,8 +1286,7 @@ begin
   GDVars.inEncMenu := 0;
 end;
 
-{ PARLAY: offers Haughty, Sly, Nice, Meek and Abusive and stores the script's value for the chosen attitude at the sixth
-  argument's address. }
+{ PARLAY: offer the five attitudes, with a single space as the prompt, and store var (choice + 1) at var 6's address }
 procedure EclParlay;
 var
   sel: Byte;
@@ -1403,8 +1307,7 @@ begin
   EclMenu.WriteGbvm(address, chosenValue);
 end;
 
-{ FIND ITEM, opcode $32: sets the equal flag when a party member carries an item of the type in its argument, the
-  not-equal flag otherwise. }
+{ FIND ITEM: set the eq comparison flag (else ne) if any party member carries an item of type var 1 }
 procedure EclFindItem;
 var
   itemType: Byte;
@@ -1434,45 +1337,11 @@ begin
   end;
 end;
 
-{ DELAY, opcode $3A: waits the message delay; no key is read. }
+{ DELAY: pause for the text delay }
 procedure EclDelay;
 begin
   Inc(GDVars.eclIp);
   TextRend.PauseOnly;
-end;
-
-{ Deals script damage to a creature with a message, then redraws the party panel; a dead creature is skipped. The
-  creature dies when the damage is more than 10 above its hit points; otherwise the message gives the damage, at most
-  three digits. When the message window is full it waits for a key first.
-  @param(dmg The damage.)
-  @param(creature The creature.) }
-procedure EclInflictDamage(dmg: Word; creature: Types.PCharRecord);
-var
-  { Unused in this version; see the other implementations of this routine. }
-  damageType: Byte;
-  msg: String;
-  dmgStr: String[3];
-  pause: Boolean;
-begin
-  if creature^.status = C_Status.DEAD_STATUS then Exit;
-  pause := False;
-  Str(dmg, dmgStr);
-  if creature^.hpCur + 10 < dmg then
-    msg := '  ' + creature^.name + ' dies. '
-  else
-    msg := '  ' + creature^.name + ' is hit for ' + dmgStr + ' points of damage.';
-  if GDVars.curRow > C_Msg.TEXT_BOTTOM then begin
-    GDVars.curRow := C_Msg.MESSAGE_TOP;
-    pause := True;
-    TextRend.DisplayAndPause(White, 'press <enter>/<return> to continue');
-  end else
-    pause := False;
-  GDVars.curCol := C_Msg.TEXT_RIGHT;
-  TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM, White,
-                                pause, msg);
-  CharHlp.InflictDamage(creature, dmg);
-  TextRend.ClearRect(17, 1, 38, 15);
-  CharHlp.DisplayParty(GDVars.curChar);
 end;
 
 { DAMAGE: apply scripted damage, then check for total party defeat. Without attack bit 7, attack counts attack rolls
@@ -1521,21 +1390,21 @@ begin
     if allParty <> 0 then begin
       while p <> nil do begin
         if attack and $20 <> 0 then
-          EclVm.EclInflictDamage(dmg, p)
+          EclMenu.EclInflictDamage(dmg, p)
         else begin
           if not FxEngine.RollSavingThrow(p, saveType, saveMod) then
-            EclVm.EclInflictDamage(dmg, p);
+            EclMenu.EclInflictDamage(dmg, p);
         end;
         p := p^.nextCharAddr;
       end;
     end else if value and $80 <> 0 then begin
       if (saveType = 0) or (not FxEngine.RollSavingThrow(GDVars.curChar, saveType - 1, saveMod)) then
-        EclVm.EclInflictDamage(dmg, GDVars.curChar);
+        EclMenu.EclInflictDamage(dmg, GDVars.curChar);
     end else begin
       for i := 2 to count do
         p := p^.nextCharAddr;
       if not FxEngine.RollSavingThrow(p, saveType, saveMod) then
-        EclVm.EclInflictDamage(dmg, p);
+        EclMenu.EclInflictDamage(dmg, p);
     end;
   end else begin
     for i := 1 to attack do begin
@@ -1547,7 +1416,7 @@ begin
         Inc(k);
       end;
       if FxEngine.AttackRollNoAttacker(p, value) then
-        EclVm.EclInflictDamage(dmg, p);
+        EclMenu.EclInflictDamage(dmg, p);
       dmg := bonus + FxEngine.RollDice(dice, sides);
     end;
   end;
@@ -1569,7 +1438,7 @@ begin
   TextRend.DisplayAndPause(White, 'press <enter>/<return> to continue');
 end;
 
-{ SPRITE OFF, opcode $31: when a sprite is showing, redraws the map view over it. }
+{ SPRITE OFF: if a sprite is showing, redraw the map view over it }
 procedure EclSpriteOff;
 begin
   Inc(GDVars.eclIp);
@@ -1590,7 +1459,7 @@ begin
   GameTime.AdvanceTime(v, 1);
 end;
 
-{ PRINT RETURN, opcode $33: moves the message cursor to the start of the next line and clears the print-return flag. }
+{ PRINTRETURN: move the message cursor to the start of the next line and clear protNewLine }
 procedure EclPrintReturn;
 begin
   Inc(GDVars.eclIp);
@@ -1631,8 +1500,6 @@ var
   npc: array[1..4] of Byte;
   id: Byte;
   morale: Byte;
-  { Unused in this version; see the other implementations of this routine. }
-  npcName: array[1..8] of Byte;
 begin
   EclMenu.LoadEclVars(2);
   id := EclMenu.GetEclVar(1);
@@ -1651,7 +1518,7 @@ end;
 
 { SPELL: look for spell var 1 in memorizedSpells[1..82] (slot 255 = not found) and write the slot to var 2's address and
   idx to var 3's. Note: found is never initialized; when it starts False only the first creature is scanned (the scan
-  always sets found), leaving idx = 1. }
+  always sets found), leaving idx = 1. addr1 and addr2 are Bytes, so both addresses lose their high byte. }
 procedure EclSpell;
 var
   spellId: Byte;
@@ -1659,8 +1526,8 @@ var
   idx: Byte;
   p: Types.PCharRecord;
   found: Boolean;
-  addr1: Word;
-  addr2: Word;
+  addr1: Byte;
+  addr2: Byte;
 begin
   EclMenu.LoadEclVars(3);
   spellId := EclMenu.GetEclVar(1);
@@ -1792,11 +1659,9 @@ var
   i: Byte;
   c: Byte;
   done: Boolean;
-  s: String;
 begin
   FillChar(GDVars.monsterFlags, SizeOf(GDVars.monsterFlags), 0);
   GDVars.eclGraphics := False;
-  s := '';
   EclMenu.LoadEclVars(1);
   address := EclMenu.CombineBytesToWord(GDVars.eclVarLo[1], GDVars.eclVarHi[1]);
   i := 0;
@@ -1811,7 +1676,6 @@ begin
     a := address + i;
     c := EclMenu.ReadGbvm(a) + 1;
     if c > 1 then begin
-      s := s + CharHlp.ByteToString(c);
       TextRend.RenderChar(GDVars.curCol, GDVars.curRow, White, 1, c, 0);
       Inc(GDVars.curCol);
       Inc(i);
@@ -1821,64 +1685,60 @@ begin
   Inc(GDVars.curRow);
 end;
 
-{ Run the command at the IP (curOpcode). Note: an unhandled opcode such as $1F prints a diagnostic and leaves the IP
-  unchanged, so CallEclScript would run it forever. }
+{ Run the command at the IP (curOpcode). Note: an unhandled opcode such as $1F does nothing and leaves the IP unchanged,
+  so CallEclScript would run it forever. }
 procedure DispatchEclCommand;
 begin
   case GDVars.curOpcode of
     EclVm.OP_EXIT: EclVm.EclExit;
-    EclVm.OP_GOTO: EclVm.EclGoto;
-    EclVm.GOSUB: EclVm.EclGosubCmd;
-    EclVm.COMPARE: EclVm.EclCompare;
-    EclVm.ADD, EclVm.SUBTRACT, EclVm.DIVIDE, EclVm.MULTIPLY: EclVm.EclArithmetic;
-    EclVm.OP_RANDOM: EclVm.EclRandom;
-    EclVm.SAVE: EclVm.EclSave;
-    EclVm.LOAD_CHARACTER: EclVm.EclLoadCharacter;
-    EclVm.LOAD_MONSTER: EclVm.EclLoadMonster;
-    EclVm.SETUP_MONSTER: EclVm.EclSetupMonster;
+    C_Ecl.OP_GOTO: EclVm.EclGoto;
+    C_Ecl.GOSUB: EclVm.EclGosubCmd;
+    C_Ecl.COMPARE: EclVm.EclCompare;
+    C_Ecl.ADD, EclVm.SUBTRACT, EclVm.DIVIDE, C_Ecl.MULTIPLY: EclVm.EclArithmetic;
+    C_Ecl.OP_RANDOM: EclVm.EclRandom;
+    C_Ecl.SAVE: EclVm.EclSave;
+    C_Ecl.LOAD_CHARACTER: EclVm.EclLoadCharacter;
+    C_Ecl.LOAD_MONSTER: EclVm.EclLoadMonster;
+    C_Ecl.SETUP_MONSTER: EclVm.EclSetupMonster;
     EclVm.APPROACH: EclVm.EclApproach;
-    EclVm.PICTURE: EclVm.EclPicture;
-    EclVm.INPUT_NUMBER: EclVm.EclInputNumber;
-    EclVm.INPUT_STRING: EclVm.EclInputString;
-    EclVm.PRINT, EclVm.PRINT_CLEAR: EclVm.EclPrint;
+    C_Ecl.PICTURE: EclVm.EclPicture;
+    C_Ecl.INPUT_NUMBER: EclVm.EclInputNumber;
+    C_Ecl.INPUT_STRING: EclVm.EclInputString;
+    C_Ecl.PRINT, C_Ecl.PRINT_CLEAR: EclVm.EclPrint;
     EclVm.RETURN: EclVm.EclReturn;
-    EclVm.COMPARE_AND: EclVm.EclCompareAnd;
+    C_Ecl.COMPARE_AND: EclVm.EclCompareAnd;
     EclVm.VERTICAL_MENU: EclVm.EclVMenu;
     EclVm.IF_EQ, EclVm.IF_NE, EclVm.IF_LT, EclVm.IF_GT, EclVm.IF_LE, EclVm.IF_GE: EclVm.EclIf;
     EclVm.CLEAR_MONSTERS: EclVm.EclClearMonsters;
-    EclVm.PARTY_STRENGTH: EclVm.EclPartyStrength;
-    EclVm.CHECK_PARTY: EclVm.EclCheckParty;
-    EclVm.NEW_ECL: EclVm.EclNewEcl;
-    EclVm.LOAD_FILES, EclVm.LOAD_PIECES: EclVm.EclLoadFiles;
-    EclVm.PARTY_SURPRISE: EclVm.EclPartySurprise;
-    EclVm.SURPRISE: EclVm.EclSurprise;
+    C_Ecl.PARTY_STRENGTH: EclVm.EclPartyStrength;
+    C_Ecl.CHECK_PARTY: EclVm.EclCheckParty;
+    C_Ecl.NEW_ECL: EclVm.EclNewEcl;
+    C_Ecl.LOAD_FILES, C_Ecl.LOAD_PIECES: EclVm.EclLoadFiles;
+    C_Ecl.PARTY_SURPRISE: EclVm.EclPartySurprise;
+    C_Ecl.SURPRISE: EclVm.EclSurprise;
     EclVm.OP_COMBAT: EclVm.EclCombat;
     EclVm.ON_GOTO, EclVm.ON_GOSUB: EclVm.EclOnGoto;
-    EclVm.TREASURE: EclVm.EclTreasure;
-    EclVm.ROB: EclVm.EclRob;
-    EclVm.ENCOUNTER: EclVm.EclEncounter;
-    EclVm.GET_TABLE: EclVm.EclGetTable;
+    C_Ecl.TREASURE: EclVm.EclTreasure;
+    C_Ecl.ROB: EclVm.EclRob;
+    C_Ecl.ENCOUNTER: EclVm.EclEncounter;
+    C_Ecl.GET_TABLE: EclVm.EclGetTable;
     EclVm.HORIZONTAL_MENU: EclVm.EclHMenu;
-    EclVm.PARLAY: EclVm.EclParlay;
-    EclVm.CALL: EclVm.EclCall;
-    EclVm.DAMAGE: EclVm.EclDamage;
-    EclVm.OP_AND, EclVm.OP_OR: EclVm.EclAndOr;
+    C_Ecl.PARLAY: EclVm.EclParlay;
+    C_Ecl.CALL: EclVm.EclCall;
+    C_Ecl.DAMAGE: EclVm.EclDamage;
+    C_Ecl.OP_AND, C_Ecl.OP_OR: EclVm.EclAndOr;
     EclVm.SPRITE_OFF: EclVm.EclSpriteOff;
-    EclVm.FIND_ITEM: EclVm.EclFindItem;
+    C_Ecl.FIND_ITEM: EclVm.EclFindItem;
     EclVm.PRINT_RETURN: EclVm.EclPrintReturn;
-    EclVm.CLOCK: EclVm.EclClock;
-    EclVm.SAVE_TABLE: EclVm.EclSaveTable;
-    EclVm.ADD_NPC: EclVm.EclAddNpc;
-    EclVm.OP_PROGRAM: EclVm.EclProgram;
-    EclVm.WHO: EclVm.EclWho;
+    C_Ecl.CLOCK: EclVm.EclClock;
+    C_Ecl.SAVE_TABLE: EclVm.EclSaveTable;
+    C_Ecl.ADD_NPC: EclVm.EclAddNpc;
+    C_Ecl.OP_PROGRAM: EclVm.EclProgram;
+    C_Ecl.WHO: EclVm.EclWho;
     EclVm.OP_DELAY: EclVm.EclDelay;
-    EclVm.SPELL: EclVm.EclSpell;
-    EclVm.PROTECTION: EclVm.EclProtection;
+    C_Ecl.SPELL: EclVm.EclSpell;
+    C_Ecl.PROTECTION: EclVm.EclProtection;
     EclVm.CLEAR_BOX: EclVm.EclClearBox;
-  else begin
-    WriteLn('codeop = ', GDVars.curOpcode, ' last = ', GDVars.prevOpcode);
-    WriteLn('string = ', GDVars.gbStrings[1]);
-  end;
   end;
 end;
 
@@ -1897,9 +1757,9 @@ begin
 end;
 
 { Refresh the event byte, run the new script's on-load entry (scriptEntryAddrs[5]), and when view3dFlag = 0 set the
-  location type for the three wilderness scripts. On the central one, call Ending.YarashComplete once the Yarash pyramid
-  is done, whatever view3dFlag is. Redraw, then run scriptEntryAddrs[1] and the search entry. newEclFlag is cleared
-  before scriptEntryAddrs[1] runs, so this repeats while that entry itself runs NEWECL. }
+  location type for the three wilderness scripts (on the central one, call Ending.YarashComplete once the Yarash pyramid
+  is done). Redraw, then run scriptEntryAddrs[1] and the search entry. newEclFlag is cleared before scriptEntryAddrs[1]
+  runs, so this repeats while that entry itself runs NEWECL. }
 procedure NewEclDone;
 var
   savedCur: Types.PCharRecord;
@@ -1912,31 +1772,28 @@ begin
     GDVars.locType := C_Area.LOC_3D_MAP;
     EclVm.CallEclScript(GDVars.scriptEntryAddrs[5]);
     GDVars.ifcState := C_Ifc.INDOORS;
-    case GDVars.eclScriptId of
-      EclVm.WILD_WEST_SCRIPT:
-        if GDVars.zone0^.view3dFlag = 0 then begin
+    if GDVars.zone0^.view3dFlag = 0 then
+      case GDVars.eclScriptId of
+        EclVm.WILD_WEST_SCRIPT: begin
           GDVars.locType := C_Area.LOC_WILD_WEST;
           GDVars.ifcState := C_Ifc.OUTDOORS;
         end;
-      EclVm.WILD_CENTRAL_SCRIPT: begin
-        if GDVars.zone0^.view3dFlag = 0 then begin
+        EclVm.WILD_CENTRAL_SCRIPT: begin
           GDVars.locType := C_Area.LOC_WILD_CENTRAL;
           GDVars.ifcState := C_Ifc.OUTDOORS;
+          if (GDVars.zone0^.yarashMissionDone = 254) and (GDVars.zone0^.yarashPyramidLeft = 0) then
+            Ending.YarashComplete(True);
         end;
-        if (GDVars.zone0^.yarashMissionDone = 254) and (GDVars.zone0^.yarashPyramidLeft = 0) then
-          Ending.YarashComplete(True);
-      end;
-      EclVm.WILD_EAST_SCRIPT:
-        if GDVars.zone0^.view3dFlag = 0 then begin
+        EclVm.WILD_EAST_SCRIPT: begin
           GDVars.locType := C_Area.LOC_WILD_EAST;
           GDVars.ifcState := C_Ifc.OUTDOORS;
         end;
-    end;
+      end;
     if (GDVars.locTypePrev > C_Area.LOC_3D_MAP) and (GDVars.locType = C_Area.LOC_3D_MAP) then
       Border.DrawWindow(3, 3, 13, 13, 0, LightGreen, '');
     if (((GDVars.locTypePrev > C_Area.LOC_3D_MAP) or (GDVars.locType = C_Area.LOC_3D_MAP)) and
         (GDVars.filesLoaded <> 0)) or
-          ((GDVars.locTypePrev = C_Area.LOC_3D_MAP) and (GDVars.locType = C_Area.LOC_3D_MAP)) then
+        ((GDVars.locTypePrev = C_Area.LOC_3D_MAP) and (GDVars.locType = C_Area.LOC_3D_MAP)) then
       MapView.DisplayMapView;
     GDVars.newEclFlag := 0;
     EclVm.CallEclScript(GDVars.scriptEntryAddrs[1]);

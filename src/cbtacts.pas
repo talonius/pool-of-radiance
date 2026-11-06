@@ -189,7 +189,7 @@ function IsBackstab(attacker, defender: Types.PCharRecord): Boolean;
 function DirTowardTarget(creature, other: Types.PCharRecord): Byte;
 
 { Builds the missile icon for a weapon's type and flies it from the attacker to the defender between the ranged-attack
-  sounds.
+  sounds, with sound auto-stop off meanwhile.
   @param(attacker The attacker.)
   @param(defender The defender.)
   @param(weapon The missile or thrown weapon.) }
@@ -205,10 +205,10 @@ procedure UpdateHostileHpPercent;
   @returns(The highest enemy movement, in whole steps.) }
 function HighestEnemyMovement(creature: Types.PCharRecord): Byte;
 
-{ Makes sure a creature has a locked target. A lock is kept, without a range check, unless `forceNew` is set or the
-  target is now an ally, disabled or forbidden by CanTarget. Otherwise it makes up to 20 random picks among the enemies
-  in range, dropping forbidden ones; when that fails a second pass repeats it, with terrain no longer blocking unless
-  `forceNew` is set, and there `relaxed` accepts a pick without CanTarget.
+{ Makes sure a creature has a locked target. A lock is kept, without a range check, unless forceNew is set or the target
+  is now an ally, disabled or forbidden by CanTarget. Otherwise it makes up to 20 random picks among the enemies in
+  range, dropping forbidden ones; when that fails a second pass repeats it, with terrain no longer blocking unless
+  forceNew, and there relaxed accepts a pick without CanTarget.
   @param(creature The creature.)
   @param(range The range in cells.)
   @param(relaxed Nonzero to accept a second-pass pick without CanTarget.)
@@ -1311,10 +1311,12 @@ begin
       pace := 20;
     end;
   end;
+  SoundDrv.SoundSetAutoStop(0);
   SoundDrv.SoundCommand(GDConsts.soundIds.combat[CbtActs.SND_RANGED_START]);
   CharHlp.CombatAnimateMovingIcon(CbtMap.CombatCellX(attacker), CbtMap.CombatCellY(attacker),
                                   CbtMap.CombatCellX(defender), CbtMap.CombatCellY(defender), frames, pace);
   SoundDrv.SoundCommand(GDConsts.soundIds.combat[CbtActs.SND_RANGED_END]);
+  SoundDrv.SoundSetAutoStop(10);
 end;
 
 procedure UpdateHostileHpPercent;

@@ -78,7 +78,7 @@ begin
   CampSpellPrepTime := base * 60 + cntMem * 15 + cntScr * 15;
 end;
 
-{ Removes every pending memorize request of a character, zeroing the slot, and clears its preparation hours.
+{ Clears each memorized-spell slot pending memorizing, taking the spell out entirely, and the preparation delay.
   @param(creature The character.) }
 procedure ResetMemorize(creature: Types.PCharRecord);
 var

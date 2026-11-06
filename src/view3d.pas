@@ -9,11 +9,11 @@ uses Types, GDConsts, GDVars, Blit, DaxIo, GameIo, Sym8x8, C_Dir;
 { Empty routine with no callers. }
 procedure InitView3D;
 
-{ Stores the four 3D view band colors: sky, the two horizon bands and floor.
-  @param(cSky The sky color.)
-  @param(cHorz1 The first horizon band's color.)
-  @param(cHorz2 The second horizon band's color.)
-  @param(cFloor The floor color.) }
+{ Sets the colors of the four bands of the 3D view's backdrop.
+  @param(cSky The sky or ceiling.)
+  @param(cHorz1 The horizon line.)
+  @param(cHorz2 The horizon band below it.)
+  @param(cFloor The floor.) }
 procedure SetView3DColors(cSky, cHorz1, cHorz2, cFloor: Byte);
 
 { Fills the four bands of the 3D view's backdrop into the view buffer: the sky, the horizon line, the horizon band and
@@ -64,28 +64,27 @@ procedure Display3DMapView(x, y: ShortInt; facing: Byte);
   @param(wsSlot The first wall-set slot to fill, 1 to 3; any other slot loads nothing.) }
 procedure LoadWallSet(fileId, wsSlot: Byte);
 
-{ Loads a 3D map block of GEO<disk>.DAX (1026 bytes: a 2-byte header and the four 16x16 planes) and records its id for
-  the script; a missing or wrong-sized block reports it, waits for a key and quits.
-  @param(mapId The block to load.) }
+{ Loads a map from GEO<disk>.DAX into the 3D map and records its number in zone 0. A block that is missing or not the
+  size of a map restores the video mode, prints an error and exits to DOS.
+  @param(mapId The block of GEO.DAX that holds the map.) }
 procedure Load3DMap(mapId: Byte);
 
 { Empty routine with no callers. }
 procedure ReleaseView3D;
 
-{ Draws the automap into the view buffer and flushes it: the 11x11 cells around the viewer, kept on the 16x16 map, each
-  as the symbol for its walls (symbol 260 plus one bit per side), and the viewer's arrow (symbol 256 plus facing div 2)
-  on its cell.
-  @param(x The viewer's map column.)
-  @param(y The viewer's map row.)
-  @param(facing The direction faced: 0, 2, 4 or 6.) }
+{ Draws the 11x11 automap around a cell into the view buffer and flushes it: each cell shows its walls as one of sixteen
+  8x8 symbols, and the party's cell shows an arrow for its facing. The window stops at the map's edges.
+  @param(x Map column of the party's cell.)
+  @param(y Map row of the party's cell.)
+  @param(facing The direction the party faces.) }
 procedure DrawAutoMap(x, y: ShortInt; facing: Byte);
 
-{ Draws a wall in one perspective form, its width by its height in symbols, clipped to the 11x11 view; symbol 0 is left
-  transparent.
-  @param(x The view column of its top left symbol.)
-  @param(y The view row of its top left symbol.)
-  @param(wallType The wall type, an index into the loaded wall graphics.)
-  @param(slot The perspective form.) }
+{ Draws one wall slot's rectangle of 8x8 symbols for a wall type into the view buffer, transparently, skipping empty
+  symbols and cells outside the 11x11 view.
+  @param(x View column of the rectangle's left edge.)
+  @param(y View row of the rectangle's top edge.)
+  @param(wallType The wall type.)
+  @param(slot The view slot, 0 to 9.) }
 procedure DrawWallSlice(x, y: ShortInt; wallType, slot: Byte);
 
 { Tells whether a cell is on the 16x16 map.

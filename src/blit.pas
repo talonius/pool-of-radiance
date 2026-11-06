@@ -16,11 +16,19 @@ type
   { An 8-pixel chunk as stored in a picture: two pixels to a byte, the first in the high nibble. }
   TChunk = array[0..3] of Byte;
 
-{ Intentionally empty stub; performs no work. }
-procedure NoopBlitA;
+{ Returns the transparency mask of an 8-pixel chunk. A transparent color above 15 can match a high nibble but never a
+  low one.
+  @param(transpColor The color that is transparent, 0..15.)
+  @param(chunk The chunk's eight pixels, two to a byte, the first in the high nibble of the first byte.)
+  @returns(A bit set for each pixel of the transparent color, bit 7 for the first pixel down to bit 0 for the last.) }
+function ComputeMask(transpColor: Byte; chunk: TChunk): Byte;
 
-{ Intentionally empty stub; performs no work. }
-procedure NoopBlitB;
+{ Translates a color through a picture's color map. The map packs two colors per byte: even colors in the high nibble,
+  odd colors in the low nibble.
+  @param(color Color index, 0..15.)
+  @param(map Color map of the picture.)
+  @returns(The mapped color, 0..15.) }
+function SrcNibble(color: Byte; map: Types.TColorMap): Byte;
 
 { Switches the display to a BIOS video mode, remembering the mode it replaces so RestoreVideoMode can go back. The BIOS
   result is not checked, so an unsupported mode fails silently while the current-mode bookkeeping still records it.
@@ -40,13 +48,6 @@ procedure RestoreVideoMode;
   @param(transpColor Color index treated as transparent in that mask.)
   @param(pic Receives the new buffer.) }
 procedure LoadPic(name: string; fileId: Byte; hasMask: Boolean; transpColor: Byte; var pic: Types.PImgBuf);
-
-{ Translates a color through a picture's color map. The map packs two colors per byte: even colors in the high nibble,
-  odd colors in the low nibble.
-  @param(color Color index, 0..15.)
-  @param(map Color map of the picture.)
-  @returns(The mapped color, 0..15.) }
-function SrcNibble(color: Byte; map: Types.TColorMap): Byte;
 
 { Converts raw packed 4-bit artwork into the pixel layout of the active video mode, filling an already-allocated image
   buffer and, when the buffer has one, its transparency mask. CGA produces two pixel bytes and a two-byte mask per
@@ -87,18 +88,27 @@ procedure BlitTileCell(screenX, screenY: Integer; tileIdx, flag: Byte; gfx, dest
   @param(dest Buffer drawn into; nothing is drawn if nil.) }
 procedure BlitTileClipped(screenX, screenY: Integer; tileIdx, flag: Byte; gfx, dest: Types.PImgBuf);
 
+{ Reverses the bit order of a byte, reflecting eight EGA pixels (one plane byte or mask byte) left to right.
+  @param(value Byte to reflect.)
+  @returns(The byte with bits 0..7 swapped with bits 7..0.) }
+function MirrorBits(value: Byte): Byte;
+
+{ Reverses the order of the eight 2-bit CGA pixels packed in a word, reflecting them left to right.
+  @param(value Two CGA pixel bytes of one cell.)
+  @returns(The word with its pixel order reversed.) }
+function MirrorPairs(value: Word): Word;
+
+{ Swaps the two 4-bit Tandy pixels of a byte, reflecting them left to right.
+  @param(value Byte holding two pixels.)
+  @returns(The byte with its nibbles exchanged.) }
+function MirrorNibbles(value: Byte): Byte;
+
 { Produces a left-right reflected copy of the first frame of a graphic, including its color map and any transparency
   mask. The destination must already be large enough, must not overlap unread source data, and must have a mask if the
   source does. The source width must be nonzero.
   @param(src Graphic to reflect; nothing happens if nil.)
   @param(dst Buffer receiving the reflection; nothing happens if nil.) }
 procedure MirrorPic(src, dst: Types.PImgBuf);
-
-{ Sets one EGA palette register through BIOS INT 10h function 10h. Colors 8..15 are raised by 8, which sets bit 4, the
-  intensity bit of the 200-line EGA modes.
-  @param(registerIndex Palette register to set.)
-  @param(color Color for that register, 0..15.) }
-procedure SetPaletteRegister(registerIndex, color: Byte);
 
 { Draws the first frame of a picture straight to video memory at a character-cell position, bypassing the view buffer
   and its dirty-span staging. No clipping or transparency is applied. CGA and Tandy copy whole rows through the segment
@@ -142,9 +152,6 @@ procedure AllocPic(height, width: Word; count: Byte; flag: Byte; var pic: Types.
   @param(pic Buffer to free; nil on return.) }
 procedure FreePic(var pic: Types.PImgBuf);
 
-{ Empty entry; calling it loads this overlay. }
-procedure PrimeBlit;
-
 { Fills a rectangle of a buffer with one solid color and marks the touched scanlines dirty for FlushView. The left and
   right edges are clipped to the buffer, and so is the bottom when the top edge is not negative. When the top edge is
   negative the fill starts at the top scanline and covers one row more than remain visible, without clipping the bottom.
@@ -157,30 +164,11 @@ procedure PrimeBlit;
   @param(pic Buffer filled, normally the view buffer; nothing happens if nil.) }
 procedure FillPicRect(x, y: Integer; width, height: Word; color: Byte; colorMap: Types.TColorMap; pic: Types.PImgBuf);
 
-{ Returns the transparency mask of an 8-pixel chunk. A transparent color above 15 can match a high nibble but never a
-  low one.
-  @param(transpColor The color that is transparent, 0..15.)
-  @param(chunk The chunk's eight pixels, two to a byte, the first in the high nibble of the first byte.)
-  @returns(A bit set for each pixel of the transparent color, bit 7 for the first pixel down to bit 0 for the last.) }
-function ComputeMask(transpColor: Byte; chunk: TChunk): Byte;
-
-{ Intentionally empty stub; performs no work. }
-procedure NoopBlitC;
-
-{ Reverses the bit order of a byte, reflecting eight EGA pixels (one plane byte or mask byte) left to right.
-  @param(value Byte to reflect.)
-  @returns(The byte with bits 0..7 swapped with bits 7..0.) }
-function MirrorBits(value: Byte): Byte;
-
-{ Reverses the order of the eight 2-bit CGA pixels packed in a word, reflecting them left to right.
-  @param(value Two CGA pixel bytes of one cell.)
-  @returns(The word with its pixel order reversed.) }
-function MirrorPairs(value: Word): Word;
-
-{ Swaps the two 4-bit Tandy pixels of a byte, reflecting them left to right.
-  @param(value Byte holding two pixels.)
-  @returns(The byte with its nibbles exchanged.) }
-function MirrorNibbles(value: Byte): Byte;
+{ Sets one EGA palette register through BIOS INT 10h function 10h. Colors 8..15 are raised by 8, which sets bit 4, the
+  intensity bit of the 200-line EGA modes.
+  @param(registerIndex Palette register to set.)
+  @param(color Color for that register, 0..15.) }
+procedure SetPaletteRegister(registerIndex, color: Byte);
 
 implementation
 
@@ -1111,10 +1099,6 @@ begin
   pic := nil;
 end;
 
-procedure PrimeBlit;
-begin
-end;
-
 procedure FillPicRect(x, y: Integer; width, height: Word; color: Byte; colorMap: Types.TColorMap; pic: Types.PImgBuf);
 var
   clipLeft: Word;
@@ -1235,18 +1219,6 @@ begin
     GDVars.interruptRegs.bh := color + 8;
   GDVars.interruptRegs.bl := registerIndex;
   Intr($10, Registers(GDVars.interruptRegs));
-end;
-
-procedure NoopBlitA;
-begin
-end;
-
-procedure NoopBlitB;
-begin
-end;
-
-procedure NoopBlitC;
-begin
 end;
 
 begin

@@ -657,15 +657,7 @@ var
   { 3D-view color register C (floor/wall band) }
   dsWallColorC: Byte;
   { unused }
-  dsUnidentified27: array[0..1] of Byte;
-  { unused }
-  dsUnidentified59: array[0..9] of Byte;
-  { Current horizontal menu choice (1-indexed); unused }
-  dsCurrentHorizontalMenu: Byte;
-  { Extended scan-code flag; unused }
-  dsExtendedScanFlag: Byte;
-  { unused }
-  dsMenuAutoAnswer: array[0..57] of Byte;
+  dsUnidentified59: array[0..71] of Byte;
 
 var
   { Map position, wall cache, animation and portrait cache }

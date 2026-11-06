@@ -29,11 +29,11 @@ procedure AllocRounded(var p: Pointer; n: Word);
   @param(ch The character.) }
 procedure WriteChar(col, row, attr, count, ch: Byte);
 
-{ Writes a string in text mode through the video BIOS, one character per column.
-  @param(col Text column of the first character.)
-  @param(row Text row.)
+{ Writes a string through the BIOS, one character at a time.
+  @param(col Column of the first character.)
+  @param(row Row of the string.)
   @param(attr Text attribute.)
-  @param(source The text.) }
+  @param(source The string.) }
 procedure WriteString(col, row, attr: Byte; source: string);
 
 { Writes a run of solid block characters through the BIOS.
@@ -43,12 +43,12 @@ procedure WriteString(col, row, attr: Byte; source: string);
   @param(count Number of blocks.) }
 procedure WriteBlock(col, row, attr, count: Byte);
 
-{ Shows a message on the bottom text row over a cleared bar, waits for a key, then clears the bar.
-  @param(attr Attribute of the message.)
-  @param(message The message.) }
+{ Shows a prompt on the bottom row, waits for a key and clears the row again.
+  @param(attr Text attribute of the prompt.)
+  @param(message The prompt.) }
 procedure PromptBox(attr: Byte; message: Types.TStr40);
 
-{ Waits until GAME.OVR can be found, asking for the overlay disk and a key each time it is missing. }
+{ Waits until GAME.OVR can be found, asking for the overlay disk and a key between tries. }
 procedure OverlayPrompt;
 
 { Opens a file for reading in bytes, asking for its disk with a bottom-row prompt and trying again until it is found,
@@ -65,12 +65,11 @@ function OpenWithRetry(fileName, promptMsg: Types.TStr40; noPrompt: Char; var f:
   @returns(True when the name is not empty and the file opened.) }
 function FileExists(name: Types.TStr40): Boolean;
 
-{ Removes the occurrences of one string from another. Note: the scan limit is computed once from the starting lengths
-  and the scan moves on after each deletion, so a match shifted into the current position survives, and a substring
-  longer than the string wraps the limit round to a large byte value.
-  @param(src The string.)
-  @param(del The text to remove.)
-  @returns(The string without the text.) }
+{ Removes occurrences of a substring in one left-to-right pass. After a deletion the scan moves on, so an occurrence
+  that slides into the deleted place is kept: adjacent repeats lose every other copy.
+  @param(src The string to clean.)
+  @param(del The substring to remove.)
+  @returns(The cleaned string.) }
 function SanitizeString(src, del: string): string;
 
 { Makes a file name from a string: removes the characters a DOS file name cannot hold, in SanitizeString's single pass,
@@ -117,7 +116,7 @@ procedure LoadDax(fileName, ext: TStr20; fileId: Byte; var sizeRead: Word; var d
   @param(v The virtual disk to select.) }
 procedure PushState(v: Byte);
 
-{ Returns to the disk PushState remembered. }
+{ Selects the virtual disk that PushState remembered. }
 procedure PopState;
 
 implementation

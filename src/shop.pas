@@ -11,10 +11,10 @@ uses Types, Crt, C_Msg, GDConsts, GDVars, TextRend, Border, CharHlp, MenuCore, E
   money. The pooled money starts empty. Leaving with money still in the pool asks whether to go back for it. }
 procedure ShopMainMenu;
 
-{ Gives the current character a copy of an item at the end of its items and recalculates its stats, unless it cannot
-  carry the item, which reports the character as overloaded.
+{ Appends a copy of an item to the current character's items and recomputes its stats. When the character cannot carry
+  the item, it prints that the character is overloaded instead.
   @param(item The item to copy.)
-  @param(failed Set True when the item was refused, else False.) }
+  @param(failed Receives True when the character could not carry the item.) }
 procedure GiveItemCopyToCreature(item: Types.PItemRec; var failed: Boolean);
 
 implementation
@@ -134,7 +134,7 @@ begin
             Money.SetTreasureCoinsInGold(pooled);
           end;
         end else
-          CharHlp.PrintBottomLine('Not enough money.');
+          CharHlp.PrintBottomLine('Not enough Money.');
       end;
     end;
   until done;
@@ -185,10 +185,10 @@ begin
                menu := '~Yes ~No';
                TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT,
                  C_Msg.TEXT_BOTTOM, LightGreen, True,
-'As you leave the shopkeeper says, "Excuse me but you have left some money here."  ');
+'As you Leave the Shopkeeper says, "Excuse me but you have Left Some Money here."  ');
                TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT,
                                              C_Msg.TEXT_BOTTOM, White, False,
-                                             'Do you want to go back and get your money?');
+                                             'Do you want to go back and get your Money?');
                ynIdx := EclMenu.MenuHorizontalCharacterSelect(query, menu, LightMagenta, LightGreen, White,
                                                               False, False);
                if ynIdx = 1 then

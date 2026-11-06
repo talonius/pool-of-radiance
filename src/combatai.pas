@@ -43,28 +43,26 @@ function SelectSpellToCast(creature: Types.PCharRecord): Boolean;
   @returns(True when the creature can no longer act.) }
 function AiMoveAttack(creature: Types.PCharRecord): Boolean;
 
-{ Ends the creature's round: a helpless, ranged-armed or out-of-initiative creature just ends its actions; others guard.
+{ Ends a creature's round: a helpless creature, one with a ranged weapon or one out of initiative ends its actions, any
+  other guards.
   @param(creature The creature.)
-  @returns(What ending the actions or guarding returns.) }
+  @returns(True.) }
 function FinishRound(creature: Types.PCharRecord): Boolean;
 
-{ Handles a key pressed during an AI turn: Alt-M toggles quick magic, space returns each creature that is neither a
-  non-player character nor animated to manual control, and Alt-X tries the victory cheat. Pending keys are discarded
-  afterwards. Note: the key is tested whether or not the extended-key prefix came first, so an unprefixed 2 also toggles
-  quick magic and an unprefixed hyphen also tries the cheat.
+{ Handles a key pressed during an AI turn: Alt-M toggles quick magic, space returns each creature that is neither an NPC
+  nor animated to manual control, and Alt-X tries the STING cheat. Pending keys are discarded afterwards. Note: the key
+  is tested whether or not the extended-key prefix came first, so an unprefixed 2 also toggles quick magic and an
+  unprefixed hyphen also tries the cheat.
   @param(creature The creature.)
   @returns(True when space put the creature itself back under manual control, which marks it to act again at once.) }
 function CheckKeystroke(creature: Types.PCharRecord): Boolean;
 
-{ Clears the creature's fleeing flag and AI effects, then checks a non-player character's morale (party characters never
-  check; a turned creature is forced to flee). Morale is twice the low 7 bits of its non-player-character byte (0 above
-  102), adjusted by condition-17 effects, and it holds when it is nonzero and covers the creature's own hit-point loss
-  in percent. Failing that, a hostile still holds when the hostiles' remaining hit-point percentage, adjusted the same
-  way, is nonzero and at least 100 less the zone's base morale. On a failure the creature flees, dropping its effects 74
-  and 75 (bite hold and blood drain), if it is at least twice as fast as the fastest enemy; otherwise one with
-  Intelligence above 5 surrenders.
+{ Checks a creature's morale against the hit points it has lost and then, for hostiles, against the group's remaining
+  hit points; effects adjust the morale for each check. A failed check makes it flee when it is twice as fast as each
+  enemy, and otherwise surrender when its Intelligence is 6 or more. A turned creature flees, and party members never
+  check.
   @param(creature The creature.)
-  @returns(True on surrender.) }
+  @returns(True when the creature surrendered.) }
 function CheckMorale(creature: Types.PCharRecord): Boolean;
 
 { Re-equips a creature with its best usable weapon (CalcWeaponPriority; its unarmed damage sets the bar for melee) and
@@ -647,10 +645,10 @@ begin
   end;
 end;
 
-{ Scores a weapon for EquipWeaponAndArmor: damage dice product, +8 per plus, +2 per damage bonus (holy water scores 8
-  against an undead target), +2 per extra shot for a launcher, +3 one-handed. The score is zero when it would need more
-  than 3 hands, for an aligned weapon of another alignment, for the Javelin of Lightning, and when cursed.
-  @param(creature The creature that would wield the weapon.)
+{ Scores a weapon for EquipWeaponAndArmor: its damage dice product, 8 per plus, 2 per damage bonus (holy water against
+  an undead target scores 8), 2 per extra shot for a launcher and 3 for a one-handed weapon. It scores 0 when it needs
+  more than three hands, for an aligned weapon of another alignment, for the Javelin of Lightning and when cursed.
+  @param(creature The creature.)
   @param(item The weapon.)
   @returns(The score.) }
 function CalcWeaponPriority(creature: Types.PCharRecord; item: Types.PItemRec): Byte;

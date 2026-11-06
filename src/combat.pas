@@ -507,8 +507,7 @@ begin
   BandageDying := found;
 end;
 
-{ Adjusts the game delay: Slower (offered below 9) raises it, Faster (offered above 0) lowers it, and Exit or Escape
-  leaves. }
+{ Runs the game-speed menu: Slower (below 9) raises gameDelay, Faster (above 0) lowers it, until Exit or Escape. }
 procedure SpeedMenu;
 var
   menu: String[40];
@@ -534,8 +533,8 @@ begin
   end;
 end;
 
-{ Puts a creature on quick fight and drops a locked target on its own side.
-  @param(creature The creature to hand to the AI.) }
+{ Puts a creature on quick-fight, dropping a locked target on its own side.
+  @param(creature The creature.) }
 procedure TurnOnAuto(creature: Types.PCharRecord);
 begin
   creature^.quickfight := 1;

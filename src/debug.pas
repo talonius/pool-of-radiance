@@ -6,12 +6,12 @@ interface
 
 uses Types, Crt, GDConsts, GDVars, TextRend;
 
-{ While the debug display is on, shows three numbers on the top text row, pauses on a message, and clears the row again;
-  otherwise does nothing.
-  @param(msg The message shown with the pause.)
-  @param(maximumHitPoints The first number shown.)
-  @param(currentHitPoints The second number shown.)
-  @param(drainedHitPoints The third number shown.) }
+{ Shows three hit-point values across the top row and pauses on a message, while the STING hit-point display is on; the
+  top row is cleared again afterwards.
+  @param(msg The message to pause on.)
+  @param(maximumHitPoints The first value shown.)
+  @param(currentHitPoints The second value shown.)
+  @param(drainedHitPoints The third value shown.) }
 procedure PrintDebug(msg: Types.TStr40; maximumHitPoints, currentHitPoints, drainedHitPoints: Byte);
 
 implementation

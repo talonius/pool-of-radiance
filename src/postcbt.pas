@@ -262,7 +262,7 @@ begin
       TextRend.DisplayString(1, 3, LightGreen, 'The party has fled.');
       experience := 0;
     end else
-      TextRend.DisplayString(1, 3, LightGreen, 'The party has found treasure!');
+      TextRend.DisplayString(1, 3, LightGreen, 'The party has found Treasure!');
   end;
   Str(experience, numStr);
   if GDVars.duelFlag then

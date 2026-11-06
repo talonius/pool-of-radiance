@@ -7,7 +7,7 @@ unit EffHndlr;
 interface
 
 uses Types, C_Item, C_Npc, C_Terr, C_Save, C_Cond, GDConsts, GDVars, CbtActs, ClassCal, FxEngine,
-  Pathing, CbtMap, CharHlp, TextRend, C_Effect, C_Equip, C_Race, C_Class, C_Status, C_Ifc, C_Align;
+  Debug, Pathing, CbtMap, CharHlp, TextRend, C_Effect, C_Equip, C_Race, C_Class, C_Status, C_Ifc, C_Align;
 
 { Install the effect handlers in GDVars.effectFns. Magic installs slot 88 (dragon breath) itself. }
 procedure InitEffectHandlers;
@@ -63,8 +63,9 @@ var
     constants stored after giantFoes. }
   giantNames: array[1..8] of Types.TName15 absolute GDConsts.giantFoes;
 
-{ Cancels the pending effect and the damage when the given effect is 0 or is the effect being applied.
-  @param(effId The effect to cancel, or 0 for whichever effect is pending.) }
+{ Nullifies the attack or effect under check: pendingDamage and pendingEffectId become 0. Effect 0 always matches; any
+  other only when it is the effect under the immunity check.
+  @param(effId The effect to nullify, or 0 for any.) }
 procedure NullifyAttack(effId: Byte);
 begin
   if (effId = 0) or (GDVars.pendingEffectId = effId) then begin
@@ -73,8 +74,9 @@ begin
   end;
 end;
 
-{ Adds an effect, removed through its handler, unless the effect lock is set.
-  @param(creature The creature given the effect.)
+{ Adds an effect, with onRemove set, unless the effect lock is on. The parameters come in a different order from
+  FxEngine.AddEffect, strength before minutes.
+  @param(creature The creature.)
   @param(effId The effect.)
   @param(strength Its strength.)
   @param(minutes Its duration in minutes.)
@@ -114,7 +116,7 @@ begin
     CharHlp.DisplayParty(GDVars.curChar);
 end;
 
-{ Applies the bless effect: adds 5 to morale and 1 to the attack roll.
+{ Bless (effect 1): adds 5 to the morale and 1 to the attack roll.
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -124,7 +126,7 @@ begin
   Inc(GDVars.attackRoll);
 end;
 
-{ Applies the curse effect: takes 5 from morale (not below 0) and 1 from the attack roll.
+{ Curse (effect 2): takes 5 off the morale, not below 0, and 1 off the attack roll.
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -161,8 +163,8 @@ begin
   FxEngine.AddEffect(creature, C_Effect.TRAINING_MANUAL, 43200, 255, True);
 end;
 
-{ Flame Tongue weapon: against its target adds 1 to the attack roll and damage of a regenerating creature, 2 of a
-  cold-based or avian one and 3 of an undead one, and makes the damage magical fire.
+{ Flame Tongue weapon (effect 6): against its target adds 1 to the attack roll and damage of a regenerating creature, 2
+  of a cold-based or avian one and 3 of an undead one, and makes the damage magical fire.
   @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -189,8 +191,8 @@ end;
 
 { Manual of Bodily Health training done (effect 7): Constitution rises by 1; at 20 or more it adds regeneration (effect
   62) for 60 minutes instead. From Constitution 15 the hit points gained above the rolled hit points are divided by the
-  Constitution bonus summed over the class levels and added to the maximum and current hit points when Constitution is
-  below 17 or the creature has fighter levels. Note: a bonus sum of 0 divides by zero.
+  Constitution bonus summed over the class levels (at least 1) and added to the maximum and current hit points when
+  Constitution is below 17 or the creature has fighter levels.
   @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -218,6 +220,8 @@ begin
         Inc(hpBonus, creature^.classLevels[j] * 2)
       else
         Inc(hpBonus, creature^.classLevels[j]);
+  if hpBonus = 0 then
+    hpBonus := 1;
   hpGain := hpGain div hpBonus;
   if (creature^.conCur < 17) or (creature^.classLevels[C_Class.FIGHTER_LEVEL] > 0) then begin
     Inc(creature^.hpMax, hpGain);
@@ -225,8 +229,8 @@ begin
   end;
 end;
 
-{ Applies protection from evil: against an evil attacker (the current character) adds 2 to the saving throw and takes 2
-  from the attack roll.
+{ Protection from Evil (effects 8 and 45): against an evil attacker, adds 2 to the saving throw and takes 2 off the
+  attack roll.
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -240,8 +244,8 @@ begin
   end;
 end;
 
-{ Applies protection from good: against a good attacker (the current character) adds 2 to the saving throw and takes 2
-  from the attack roll.
+{ Protection from Good (effects 9 and 46): against a good attacker, adds 2 to the saving throw and takes 2 off the
+  attack roll.
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -255,7 +259,7 @@ begin
   end;
 end;
 
-{ Applies resist cold: halves cold damage and adds 3 to the saving throw against it.
+{ Resist Cold (effect 10): against cold, halves the damage and adds 3 to the saving throw.
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -344,9 +348,9 @@ begin
   creature^.chaCur := Types.PEffectRec(p)^.strength;
 end;
 
-{ Applies the poison that slow poison holds back: every ten minutes, unless the effect lock is set, renews itself and
-  costs the creature 1 hit point while it has more than 1, redrawing the party display outside combat.
-  @param(creature The creature carrying the effect.)
+{ Slow Poison's damage (effect 15): unless the effect lock is on, it re-arms for 10 minutes and deals 1 damage while the
+  creature has more than 1 hit point.
+  @param(creature The creature with the effect.)
   @param(p The effect's node.)
   @param(removed Unused.) }
 procedure EffSlowPoisonHit(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
@@ -360,7 +364,7 @@ begin
     end;
 end;
 
-{ Does nothing for the read magic effect.
+{ Read Magic (effect 16): does nothing here; scroll reading checks for the effect.
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -368,9 +372,8 @@ procedure EffReadMagic(creature: Types.PCharRecord; p: Pointer; removed: Boolean
 begin
 end;
 
-{ Applies shield: raises the creature's armor class value to at least 57 (armor class 3), adds 1 to the saving throw,
-  and stops Magic Missile.
-  @param(creature The creature carrying the effect.)
+{ Shield (effect 17): the armor class becomes at least 3, the saving throw gains 1, and Magic Missile does no damage.
+  @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
 procedure EffShield(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
@@ -413,7 +416,8 @@ begin
   end;
 end;
 
-{ Applies silence: the creature can neither use items nor cast this round, and says it is silenced the first time.
+{ Silence 15' (effect 21): the creature can neither use items nor cast this round, and says it is silenced the first
+  time.
   @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -527,7 +531,7 @@ begin
       end;
 end;
 
-{ Applies ray of enfeeblement: the damage loses a quarter, rounded down.
+{ Ray of Enfeeblement (effect 29): the damage loses a quarter, rounded down.
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -536,9 +540,9 @@ begin
   GDVars.pendingDamage := GDVars.pendingDamage - GDVars.pendingDamage div 4;
 end;
 
-{ Coughing effect: shows 'is coughing' the first time, stops the creature casting and using items, lowers its rear armor
-  class value by 2, to no less than 50, and copies it to the armor class.
-  @param(creature The creature the effect is on.)
+{ Coughing in a stinking cloud (effect 30): the creature can neither use items nor cast this round, says it is coughing
+  the first time, and its armor class worsens by 2, to the armor class from behind.
+  @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
 procedure EffCoughing(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
@@ -577,7 +581,7 @@ begin
   creature^.charType := 0;
 end;
 
-{ Applies blindness: the attack roll, armor class, armor class from behind and saving throw each lose 4.
+{ Blindness (effect 33): the attack roll, armor class, armor class from behind and saving throw each lose 4.
   @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -589,10 +593,10 @@ begin
   Dec(GDVars.saveRoll, 4);
 end;
 
-{ Applies disease: runs the handlers of the strength-loss and hit-point-loss diseases.
-  @param(creature The creature carrying the effect.)
-  @param(p Passed on to the handlers.)
-  @param(removed Passed on to the handlers.) }
+{ Diseased (effect 34): runs the Strength and hit-point disease handlers.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
+  @param(removed True when the effect is being removed.) }
 procedure EffDiseased(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
   FxEngine.CallEffectHandler(C_Effect.DISEASE_STRENGTH, creature, p, removed);
@@ -609,7 +613,7 @@ begin
   Inc(GDVars.attackRoll);
 end;
 
-{ Applies bestow curse: takes 4 from the attack roll and the saving throw.
+{ Bestow Curse (effect 36): the attack roll and the saving throw lose 4.
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -631,8 +635,8 @@ begin
   end;
 end;
 
-{ Haste effect: the creature ages a year the first time (bit 4 of the strength marks that), and its movement or attacks
-  double.
+{ Haste (effect 39): the creature ages a year the first time (bit 4 of the strength marks that), and its movement or
+  attacks double.
   @param(creature The creature with the effect.)
   @param(p The effect's node.)
   @param(removed Unused.) }
@@ -706,8 +710,8 @@ begin
   end;
 end;
 
-{ Lets a creature avoid a missile: when the current character has a readied weapon and stands more than one cell away, a
-  d100 roll within the chance cancels the damage, makes the attack miss and takes the hit back, with 'Avoids it'.
+{ Lets a creature avoid a missile: when the attacker has a weapon readied and is more than one cell away, a roll within
+  the chance makes it avoid the attack, which then does no damage, misses and counts as one hit fewer.
   @param(creature The creature attacked.)
   @param(pct The chance in percent.) }
 procedure AvoidMissile(creature: Types.PCharRecord; pct: Byte);
@@ -722,9 +726,10 @@ begin
       end;
 end;
 
-{ Finds the item a creature attacks with: the missile its readied weapon fires or throws, else the readied weapon.
-  @param(creature The creature.)
-  @returns(The item, or nil with no weapon readied.) }
+{ Finds the item that deals an attacker's damage: the missile or thrown weapon of a ranged attack, else the readied
+  weapon.
+  @param(creature The attacker.)
+  @returns(The item, or nil without a readied weapon.) }
 function FindDamagingWeapon(creature: Types.PCharRecord): Types.PItemRec;
 var
   sel: Types.PItemRec;
@@ -739,8 +744,8 @@ begin
   FindDamagingWeapon := sel;
 end;
 
-{ Protection from Normal Missiles effect: a missile without a plus is always avoided.
-  @param(creature The creature carrying the effect.)
+{ Protection from Normal Missiles (effect 41): a missile from a weapon with no plus is avoided.
+  @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
 procedure EffProtNormalMissiles(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
@@ -750,7 +755,7 @@ begin
       EffHndlr.AvoidMissile(creature, 100);
 end;
 
-{ Applies Slow: halves the movement or attacks.
+{ Slow (effect 42): the movement or attacks halve.
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -759,10 +764,10 @@ begin
   GDVars.attackOrMoveX2 := GDVars.attackOrMoveX2 div 2;
 end;
 
-{ Strength disease: unless effects are locked, renews itself for 60 more minutes and lowers the Strength by 1 ('is
-  weakened') while it is above 3; at 3 the creature becomes helpless.
-  @param(creature The creature the effect is on.)
-  @param(p The effect node.)
+{ The Strength-draining disease (effect 43): unless the effect lock is on, it re-arms for 60 minutes and the creature
+  loses 1 Strength, or at Strength 3 becomes helpless.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
   @param(removed Unused.) }
 procedure EffDiseaseStrength(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
@@ -777,8 +782,8 @@ begin
         FxEngine.AddEffect(creature, C_Effect.HELPLESS, 0, 255, False);
 end;
 
-{ Hit-point disease: unless the effect lock is on, it re-arms for 10 minutes and deals 1 damage, or at 1 hit point the
-  creature becomes helpless.
+{ The hit-point disease (effect 44): unless the effect lock is on, it re-arms for 10 minutes and deals 1 damage, or at 1
+  hit point the creature becomes helpless.
   @param(creature The creature with the effect.)
   @param(p The effect's node.)
   @param(removed Unused.) }
@@ -827,11 +832,11 @@ begin
       Dec(GDVars.attackRoll, 4);
 end;
 
-{ Applies prayer: gives the side named by strength bit 4 a 1 bonus to saving throws and attack rolls and the other side
-  a 1 penalty.
-  @param(creature The creature carrying the effect.)
+{ Prayer (effect 49): creatures on the caster's side (bit 4 of the strength) get the allied bonus, the others lose 1 on
+  the attack roll and saving throw.
+  @param(creature The creature with the effect.)
   @param(p The effect's node.)
-  @param(removed Passed on to the bonus routine.) }
+  @param(removed True when the effect is being removed.) }
 procedure EffPrayer(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 var
   side: Byte;
@@ -874,7 +879,7 @@ procedure EffDragonAura(creature: Types.PCharRecord; p: Pointer; removed: Boolea
 begin
 end;
 
-{ Does nothing for the poisoned effect.
+{ Poisoned (effect 55): does nothing; other code checks for the effect.
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -882,7 +887,7 @@ procedure EffPoisoned(creature: Types.PCharRecord; p: Pointer; removed: Boolean)
 begin
 end;
 
-{ Ring of Invisibility effect: renews invisibility for a minute.
+{ Wearing a Ring of Invisibility (effect 56): renews invisibility for a minute.
   @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -893,7 +898,7 @@ end;
 
 { Mummy rot (effect 57): each time costs 2 Charisma, not below 3; while the countdown in the strength's upper nibble is
   above 1 it counts down and re-arms for 43200 minutes, and then the creature rots away. Nothing happens under the
-  effect lock. Note: Charisma below 2 wraps around instead of stopping at 3.
+  effect lock.
   @param(creature The creature with the effect.)
   @param(p The effect's node.)
   @param(removed Unused.) }
@@ -901,14 +906,17 @@ procedure EffMummyRot(creature: Types.PCharRecord; p: Pointer; removed: Boolean)
 begin
   if GDVars.effectLock <> 0 then Exit;
   CharHlp.PrintCreatureMessage(creature, 'Rots...', 10, True);
-  Dec(creature^.chaCur, 2);
+  if creature^.chaCur > 2 then
+    Dec(creature^.chaCur, 2)
+  else
+    creature^.chaCur := 0;
   if creature^.chaCur < 3 then
     creature^.chaCur := 3;
   if Types.PEffectRec(p)^.strength div 16 > 1 then begin
     Dec(Types.PEffectRec(p)^.strength, $10);
     if EffHndlr.AddEffectIfNoLock(creature, C_Effect.MUMMY_ROT, Types.PEffectRec(p)^.strength, 43200) then ;
   end else
-    EffHndlr.InflictStatusMsg(creature, C_Status.GONE, 'Dies from rot');
+    EffHndlr.InflictStatusMsg(creature, C_Status.GONE, 'Dies rots away');
 end;
 
 { Immobility (effect 58): the creature has no movement.
@@ -922,7 +930,7 @@ begin
     GDVars.attackOrMoveX2 := 0;
 end;
 
-{ A troll's regeneration starting: adds lasting regeneration (effect 98).
+{ A troll's regeneration starting (effect 59): adds lasting regeneration (effect 98).
   @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -952,10 +960,10 @@ begin
   end;
 end;
 
-{ Constitution regeneration, for Constitution 20 and over: unless the effect lock is set, renews itself for an hour and
-  heals a hit point.
-  @param(creature Creature with the effect.)
-  @param(p The effect record.)
+{ Regeneration from high Constitution (effect 62): unless the effect lock is on, it re-arms for 60 minutes and restores
+  1 hit point.
+  @param(creature The creature with the effect.)
+  @param(p The effect's node.)
   @param(removed Unused.) }
 procedure EffConRegeneration(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
 begin
@@ -978,9 +986,8 @@ begin
   end;
 end;
 
-{ Paralyzes the creature's combat target for the given minutes when it fails a saving throw (type 0). Note: the save
-  modifier is never used, so the save has no modifier.
-  @param(creature The attacking creature.)
+{ Paralyzes the attacker's target unless it saves against paralysis.
+  @param(creature The attacker.)
   @param(minutes How long the paralysis lasts.)
   @param(saveMod Unused.) }
 procedure ParalyzeTarget(creature: Types.PCharRecord; minutes: Word; saveMod: ShortInt);
@@ -992,8 +999,8 @@ begin
   end;
 end;
 
-{ Makes a hit poisonous: the target saves against poison or dies.
-  @param(creature The creature the effect is on.)
+{ Poison on a hit (effect 64): the target saves at +0.
+  @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
 procedure EffPoisonAttack(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
@@ -1001,8 +1008,8 @@ begin
   EffHndlr.PoisonTarget(creature, 0);
 end;
 
-{ Makes a hit weakly poisonous: the target saves against poison, at +4, or dies.
-  @param(creature The creature the effect is on.)
+{ Weak poison on a hit (effect 65): the target saves at +4.
+  @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
 procedure EffWeakPoisonAttack(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
@@ -1010,8 +1017,8 @@ begin
   EffHndlr.PoisonTarget(creature, 4);
 end;
 
-{ Makes a hit mildly poisonous: the target saves against poison, at +2, or dies.
-  @param(creature The creature the effect is on.)
+{ Mild poison on a hit (effect 66): the target saves at +2.
+  @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
 procedure EffMildPoisonAttack(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
@@ -1019,8 +1026,8 @@ begin
   EffHndlr.PoisonTarget(creature, 2);
 end;
 
-{ Paralyzing-hit effect: the target saves or is paralyzed for 2d8 minutes.
-  @param(creature The creature the effect is on.)
+{ Thri-kreen paralysis on a hit (effect 67): 2d8 minutes.
+  @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
 procedure EffParalyzingHit(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
@@ -1047,8 +1054,8 @@ begin
   EffHndlr.ParalyzeTarget(creature, FxEngine.RollDice(1, 9) + 10, -2);
 end;
 
-{ Makes a hit strongly poisonous: the target saves against poison, at -2, or dies.
-  @param(creature The creature the effect is on.)
+{ Strong poison on a hit (effect 70): the target saves at -2.
+  @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
 procedure EffStrongPoisonAttack(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
@@ -1066,7 +1073,7 @@ begin
   Dec(GDVars.attackRoll, 4);
 end;
 
-{ Camouflage and the Cloak of Elvenkind: 95 percent of the time, invisibility for a minute.
+{ Camouflage and the Cloak of Elvenkind (effect 72): 95 percent of the time, invisibility for a minute.
   @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1143,7 +1150,7 @@ begin
   end;
 end;
 
-{ Revival effect: the creature revives with its current hit points, or the effect re-arms to try again in a minute.
+{ Waking when healed (effect 78): the creature revives with its current hit points, or tries again in a minute.
   @param(creature The creature with the effect.)
   @param(p The effect's node.)
   @param(removed Unused.) }
@@ -1156,7 +1163,7 @@ begin
     repeated := EffHndlr.AddEffectIfNoLock(creature, C_Effect.HEAL_WAKE, Types.PEffectRec(p)^.strength, 1);
 end;
 
-{ Fire on a hit: 2d10 magical fire damage to the target.
+{ Fire on a hit (effect 79): 2d10 magical fire damage to the target.
   @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1166,7 +1173,7 @@ begin
   FxEngine.InflictNonWeaponDamage(creature^.combatAddr^.other, FxEngine.RollDamageDice(2, 10), 0, False);
 end;
 
-{ Acid-touch effect: a hit deals 1d4 acid damage to the target.
+{ Acid on a hit (effect 80): 1d4 acid damage to the target.
   @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1364,6 +1371,7 @@ begin
       for j := 0 to 7 do
         Inc(totalLevels, creature^.classLevels[j]);
       hpPerLevel := creature^.hpMax div totalLevels;
+      Debug.PrintDebug('max,cur,lost', creature^.hpMax, creature^.hpCur, creature^.drainedHps);
       for k := 1 to hpPerLevel do begin
         if creature^.hpMax > 0 then
           Dec(creature^.hpMax);
@@ -1429,8 +1437,8 @@ begin
   end;
 end;
 
-{ Applies displacement: the first attack on the creature misses; the mark in strength bit 4 is cleared only in round 0
-  on a zero attack roll.
+{ Displacement (effect 89): the first attack on the creature each round misses; bit 4 of the strength marks that it has
+  been used, cleared at the start of the battle.
   @param(creature Unused.)
   @param(p The effect's node.)
   @param(removed Unused.) }
@@ -1480,7 +1488,7 @@ begin
       EffHndlr.NullifyAttack(0);
 end;
 
-{ Halves fire damage.
+{ Half damage from fire (effect 93).
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1504,7 +1512,7 @@ begin
       GDVars.pendingDamage := GDVars.pendingDamage div 2;
 end;
 
-{ Fighting on at 0 hit points: when it runs out, a creature still fighting falls dead.
+{ Fighting on at 0 hit points (effect 95): when it runs out, a creature still fighting falls dead.
   @param(creature The creature with the effect.)
   @param(p The effect's node.)
   @param(removed Unused.) }
@@ -1528,9 +1536,9 @@ begin
     GDVars.pendingDamage := 0;
 end;
 
-{ Constitution save bonus: adds 1 at Constitution 4..6, up to 5 at 18..20, to saving throws against spells and wands.
-  Note: a Constitution outside 4..20 adds an unset value.
-  @param(creature The creature the effect is on.)
+{ Constitution's save bonus against spells and wands (effect 97): 1 to 5 by Constitution. Note: outside Constitution 4
+  to 20 the bonus is unset.
+  @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
 procedure EffConSpellSave(creature: Types.PCharRecord; p: Pointer; removed: Boolean);
@@ -1560,8 +1568,8 @@ begin
     creature^.hpCur := creature^.hpMax;
 end;
 
-{ Being able to fight on: a dying creature less than 6 below 0, or an unconscious one, revives and fights on under the
-  fighting-on effect for 1d4+1 minutes, and this effect goes.
+{ Being able to fight on (effect 99): a dying creature less than 6 below 0, or an unconscious one, revives and fights on
+  (effect 95) for 1d4+1 minutes, and this effect goes.
   @param(creature The creature with the effect.)
   @param(p The effect's node.)
   @param(removed Unused.) }
@@ -1583,7 +1591,8 @@ begin
     end;
 end;
 
-{ A troll's vulnerability to fire and acid: damage of any other kind starts its return in 3d6 minutes.
+{ A troll's vulnerability to fire and acid (effect 100): damage of any other kind brings it back (effect 102) in 3d6
+  minutes.
   @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1593,7 +1602,7 @@ begin
     FxEngine.AddEffect(creature, EffHndlr.TROLL_RETURN, FxEngine.RollDice(3, 6), 255, True);
 end;
 
-{ A troll's regeneration: unless it already regenerates, regeneration starts in 3 minutes.
+{ A troll's regeneration (effect 101): unless it already regenerates, regeneration starts in 3 minutes (effect 59).
   @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1606,7 +1615,7 @@ begin
       FxEngine.AddEffect(creature, C_Effect.TROLL_REGENERATION, 3, 255, True);
 end;
 
-{ A troll coming back: it revives at full hit points, or tries again in a minute.
+{ A troll coming back (effect 102): it revives at full hit points, or tries again in a minute.
   @param(creature The creature with the effect.)
   @param(p The effect's node.)
   @param(removed Unused.) }
@@ -1630,7 +1639,7 @@ begin
   FxEngine.PutOutOfPlayWithStatus(creature, C_Status.RUNNING, 'Turns gaseous and escapes');
 end;
 
-{ Missile-dodging effect: a 60 percent chance to avoid a missile.
+{ Thri-kreen missile dodging (effect 104): a 60 percent chance to avoid a missile.
   @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1656,7 +1665,7 @@ begin
     EffHndlr.NullifyAttack(0);
 end;
 
-{ Gives magic resistance of 50, which rises against casters below level 11.
+{ Magic resistance of 50 percent (effect 105).
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1665,7 +1674,7 @@ begin
   EffHndlr.MagicResistance(50);
 end;
 
-{ Gives magic resistance of 15, which rises against casters below level 11.
+{ Magic resistance (effect 106). Note: it passes 15, so it resists 15 percent, not 85, against an 11th-level caster.
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1674,7 +1683,7 @@ begin
   EffHndlr.MagicResistance(15);
 end;
 
-{ Elven resistance: a 90 percent chance to resist sleep and charm.
+{ An elf's 90 percent resistance to sleep and charm (effect 107).
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1686,7 +1695,7 @@ begin
   end;
 end;
 
-{ Immunity to sleep and charm: charm and sleep have no effect.
+{ Immunity to sleep and charm (effect 108).
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1696,7 +1705,7 @@ begin
   EffHndlr.NullifyAttack(C_Effect.SLEEP);
 end;
 
-{ Immunity to paralysis: paralysis has no effect.
+{ Immunity to paralysis (effect 109).
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1715,7 +1724,7 @@ begin
     EffHndlr.NullifyAttack(0);
 end;
 
-{ Immunity to poison and paralysis: poison and paralysis have no effect, and saving throws of type 0 always succeed.
+{ Immunity to paralysis and poison (effect 111): saves against paralysis and poison succeed.
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1763,7 +1772,7 @@ begin
     GDVars.pendingDamage := GDVars.pendingDamage div 2;
 end;
 
-{ Halves the pending damage when the current character's weapon is a slashing or piercing one.
+{ Half damage from slashing and piercing weapons (effect 115).
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1778,7 +1787,7 @@ begin
       GDVars.pendingDamage := GDVars.pendingDamage div 2;
 end;
 
-{ Halves the damage of a weapon with a plus.
+{ Half damage from magical weapons (effect 116).
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1792,8 +1801,7 @@ begin
       GDVars.pendingDamage := GDVars.pendingDamage div 2;
 end;
 
-{ Applies vulnerability to holy water: an attacker (the current character) wielding a holy water vial does 1d6 + 1
-  damage.
+{ Vulnerability to holy water (effect 117): a holy water vial does 1d6+1.
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1807,7 +1815,7 @@ begin
       GDVars.pendingDamage := FxEngine.RollDamageDice(1, 6) + 1;
 end;
 
-{ Halves cold damage.
+{ Half damage from cold (effect 118).
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1832,7 +1840,7 @@ begin
       GDVars.pendingDamage := 0;
 end;
 
-{ Boulder-dodging effect: a 50 percent chance to avoid a thrown boulder.
+{ Dodging boulders (effect 120): a 50 percent chance to avoid a thrown boulder.
   @param(creature The creature with the effect.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1906,7 +1914,7 @@ begin
     GDVars.pendingDamage := 0;
 end;
 
-{ Half-elven resistance: a 30 percent chance to resist sleep and charm.
+{ A half-elf's 30 percent resistance to sleep and charm (effect 124).
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -1918,8 +1926,7 @@ begin
   end;
 end;
 
-{ Immunity to charm, sleep, paralysis and poison: those effects are canceled, and saves against paralysis and poison
-  succeed.
+{ Immunity to charm, sleep, paralysis and poison (effect 125): saves against paralysis and poison succeed.
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }
@@ -2069,7 +2076,7 @@ begin
     FxEngine.RemoveEffect(creature, C_Effect.SPIRITUAL_HAMMER, nil);
 end;
 
-{ Does nothing.
+{ Does nothing (effects 5, 13, 19, 24, 27, 60, 63, 92 and 127).
   @param(creature Unused.)
   @param(p Unused.)
   @param(removed Unused.) }

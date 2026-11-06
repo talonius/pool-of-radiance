@@ -1,5 +1,5 @@
 { Shared creature operations: statistics, equipment, inventory, damage, targeting and party display. }
-{$O+,F+}
+{$F-}
 unit CharHlp;
 
 interface
@@ -24,6 +24,13 @@ procedure PrintItemString(creature: Types.PCharRecord; item: Types.PItemRec; col
   @param(hl The creature whose name is drawn in white; the others are colored as DisplayCreatureName colors them.) }
 procedure DisplayParty(hl: Types.PCharRecord);
 
+{ Prints a creature's armor class in light green; the armor class is kept as 60 minus it, so a value above 60 prints as
+  negative.
+  @param(creature The creature.)
+  @param(col Column to print at.)
+  @param(row Row to print at.) }
+procedure PrintArmorClass(creature: Types.PCharRecord; col, row: Byte);
+
 { Prints a creature's hit points: yellow when wounded, light green when whole.
   @param(creature The creature.)
   @param(col Column to print at.)
@@ -31,12 +38,12 @@ procedure DisplayParty(hl: Types.PCharRecord);
   @param(hotPink True to print them in light magenta instead.) }
 procedure PrintHitPoints(creature: Types.PCharRecord; col, row: Byte; hotPink: Boolean);
 
-{ Prints a character's armor class in light green: 60 minus the stored value, with a minus sign when the value is above
-  60.
-  @param(creature The character.)
-  @param(col Screen column.)
-  @param(row Screen row.) }
-procedure PrintArmorClass(creature: Types.PCharRecord; col, row: Byte);
+{ Prints a creature's name: light red when it is out of action, yellow when hostile, light cyan otherwise.
+  @param(creature The creature.)
+  @param(col Column to print at.)
+  @param(row Row to print at.)
+  @param(possessive True to add 's.) }
+procedure DisplayCreatureName(creature: Types.PCharRecord; col, row: Byte; possessive: Boolean);
 
 { Shows a creature's name, hit points, armor class, readied weapon and status in the combat information panel.
   @param(creature The creature.) }
@@ -54,66 +61,10 @@ function IsHelpless(creature: Types.PCharRecord): Boolean;
   @param(creature The creature.) }
 procedure RecalcStats(creature: Types.PCharRecord);
 
-{ Writes a number in decimal.
-  @param(value The number.)
-  @returns(The digits.) }
-function LongIntToString(value: LongInt): String;
-
-{ Writes a number in decimal.
-  @param(value The number.)
-  @returns(The digits.) }
-function WordToString(value: Word): String;
-
-{ Writes a number in decimal.
-  @param(value The number.)
-  @returns(The digits.) }
-function ByteToString(value: Byte): String;
-
-{ Computes the Dexterity missile adjustment from the current Dexterity: -4 at 0..2, -3..-1 at 3..5, +1..+3 at 16..18, 3
-  at 19..20, 4 at 21..23, 5 at 24..25, else 0.
-  @param(creature The creature.)
-  @returns(The adjustment.) }
-function DexMissileAdjust(creature: Types.PCharRecord): ShortInt;
-
-{ Computes the Dexterity defensive adjustment from the current Dexterity: -4 at 1..3, -3..-1 at 4..6, +1..+4 at 15..18,
-  4 at 19..20, 5 at 21..23, 6 at 24..25, else 0.
+{ Finds a creature's armor-class adjustment for Dexterity, positive being better as armor class is kept reversed.
   @param(creature The creature.)
   @returns(The adjustment.) }
 function DexterityArmorAdjustment(creature: Types.PCharRecord): ShortInt;
-
-{ Computes the Strength to-hit bonus on TranslatedStrength's scale (-3 at 1..3 up to +7 at 30), or 0 unless the
-  creature's Strength bonus applies.
-  @param(creature The creature.)
-  @returns(The to-hit bonus.) }
-function StrToHitAdjust(creature: Types.PCharRecord): ShortInt;
-
-{ Finds a creature's damage adjustment for its translated Strength, 0 when the creature takes no Strength bonus.
-  @param(creature The creature.)
-  @returns(The adjustment.) }
-function StrDamageAdjust(creature: Types.PCharRecord): ShortInt;
-
-{ Finds a creature's weight allowance for its translated Strength, from -350 to 15000 encumbrance units.
-  @param(creature The creature.)
-  @returns(The allowance, which may be negative.) }
-function WeightAllowance(creature: Types.PCharRecord): Integer;
-
-{ Clears the current character's first memorized-spell slot holding a spell.
-  @param(spell The spell.) }
-procedure RemoveSpell(spell: Byte);
-
-{ Takes an item out of a creature's items and frees it; a nil item, or one not in the list, only gets an error message.
-  @param(creature The creature.)
-  @param(item The item.) }
-procedure RemoveItem(creature: Types.PCharRecord; item: Types.PItemRec);
-
-{ Appends a copy of an item to the end of a character's item list.
-  @param(creature The character who receives the copy.)
-  @param(item The item to copy.) }
-procedure AddItemCopy(creature: Types.PCharRecord; item: Types.PItemRec);
-
-{ Shows a message on the bottom row in light green for the text delay, then clears the row.
-  @param(s The message.) }
-procedure PrintBottomLine(s: Types.TStr40);
 
 { Shows a creature's name and a message in the message window: in combat in the panel from column 23 at a row, and
   otherwise in the bottom window (bordered unless suppressBorder is set) with the name on its first line and the message
@@ -124,15 +75,41 @@ procedure PrintBottomLine(s: Types.TStr40);
   @param(pause True to wait the text delay and clear the window afterwards.) }
 procedure PrintCreatureMessage(creature: Types.PCharRecord; s: string; row: Byte; pause: Boolean);
 
-{ Clears the message area: the side panel's rows 10..21 in combat, otherwise rows 18..22. }
-procedure ClearMessageWindow;
+{ Writes a number in decimal.
+  @param(value The number.)
+  @returns(The digits.) }
+function ByteToString(value: Byte): String;
 
-{ Prints a creature's name: light red when it is out of action, yellow when hostile, light cyan otherwise.
+{ Writes a number in decimal.
+  @param(value The number.)
+  @returns(The digits.) }
+function WordToString(value: Word): String;
+
+{ Writes a number in decimal.
+  @param(value The number.)
+  @returns(The digits.) }
+function LongIntToString(value: LongInt): String;
+
+{ Clears the current character's first memorized-spell slot holding a spell.
+  @param(spell The spell.) }
+procedure RemoveSpell(spell: Byte);
+
+{ Takes an item out of a creature's items and frees it; a nil item, or one not in the list, only gets an error message.
   @param(creature The creature.)
-  @param(col Column to print at.)
-  @param(row Row to print at.)
-  @param(possessive True to add 's.) }
-procedure DisplayCreatureName(creature: Types.PCharRecord; col, row: Byte; possessive: Boolean);
+  @param(item The item.) }
+procedure RemoveItem(creature: Types.PCharRecord; item: Types.PItemRec);
+
+{ Appends a copy of an item to a creature's items; the caller checks that there is room.
+  @param(creature The creature.)
+  @param(item The item.) }
+procedure AddItemCopy(creature: Types.PCharRecord; item: Types.PItemRec);
+
+{ Shows a message on the bottom row in light green for the text delay, then clears the row.
+  @param(s The message.) }
+procedure PrintBottomLine(s: Types.TStr40);
+
+{ Clears the message window in use, combat or bottom, leaving its border. }
+procedure ClearMessageWindow;
 
 { Copies one frame of an icon into a frame of the moving-icon sheet, mirrored when asked; on EGA the mask is a quarter
   of the picture's size.
@@ -161,30 +138,29 @@ procedure CombatAnimateMovingIcon(startX, startY, endX, endY: ShortInt; frames, 
 
 { Shows a creature's name and a message with a damage or effect flash. In combat the flash frames are built, the
   creature scrolled into view, the sound played and the message printed; then the four frames flash on the creature,
-  once more than the game's delay setting for an effect and once for damage, which then waits the text delay. Outside
-  combat it prints the message with a pause.
+  gameDelay + 1 times for an effect and once for damage, which then waits the text delay. Sound auto-stop is off during
+  the flash. Outside combat it is PrintCreatureMessage with a pause.
   @param(creature The creature.)
   @param(effect True for an effect, False for damage.)
   @param(s The message.) }
 procedure PrintNameStringAnim(creature: Types.PCharRecord; effect: Boolean; s: Types.TStr40);
 
-{ Tells whether a creature carries an effect.
+{ Tells whether a creature has an effect.
   @param(creature The creature.)
   @param(id The effect.)
-  @param(effect Receives the matching effect node, or nil when there is none.)
-  @returns(True when it carries the effect.) }
+  @param(effect Receives the effect's node, or nil.)
+  @returns(True when the creature has the effect.) }
 function HasEffect(creature: Types.PCharRecord; id: Byte; var effect: Types.PEffectRec): Boolean;
 
-{ Takes damage off a creature's hit points and updates its status. Falling more than 9 below 0, or an animated creature
-  reaching 0, is death; any other drop below 0 is dying (combat records how far below); exactly 0 is unconscious. A
-  creature that is then not okay or animated is taken out of play with no hit points (in combat its side's count drops
-  and its initiative is cleared); otherwise it keeps the hit points left.
+{ Deals damage and sets the creature's status. More than nine points beyond its hit points kill it; fewer leave it
+  dying; exactly none left leaves it unconscious, except that an animated creature dies. A creature no longer okay or
+  animated is taken out of action, and in combat out of its team's count and the initiative order.
   @param(creature The creature.)
   @param(dmg The damage.) }
 procedure InflictDamage(creature: Types.PCharRecord; dmg: Byte);
 
-{ Prints 'is fully healed' or 'is partially healed' for a creature, and outside combat redraws the roster.
-  @param(creature The healed creature.) }
+{ Says whether a creature is fully or partly healed, and redraws the party panel outside combat.
+  @param(creature The creature.) }
 procedure AnnounceHealStatus(creature: Types.PCharRecord);
 
 { Finds a creature's opposing team.
@@ -192,26 +168,26 @@ procedure AnnounceHealStatus(creature: Types.PCharRecord);
   @returns(1 for a creature that is not hostile, else 0.) }
 function EnemyTeam(creature: Types.PCharRecord): ShortInt;
 
-{ Recounts the creatures in play on each side. }
+{ Counts the creatures still in action on each team. }
 procedure CountTeams;
 
-{ Builds the target list within a range of a creature, narrows it to the creature's enemies and copies their creature
-  indices into the target-slot table.
-  @param(creature The creature at the center.)
-  @param(range The range.)
-  @returns(The number of targets kept.) }
+{ Builds the target list around a creature within a range and keeps only its enemies, whose combat slots also go into
+  potentialTargets.
+  @param(creature The creature.)
+  @param(range The range in cells.)
+  @returns(The number of enemies in range.) }
 function CountTargets(creature: Types.PCharRecord; range: Byte): Byte;
 
-{ Measures the distance in whole steps from one creature to another, read from a fresh range-255 target list built
-  ignoring terrain (the previous list is saved and restored). Note: an absent target gives the last entry's distance.
-  @param(creature The creature measuring.)
-  @param(other The creature to find.)
-  @returns(The distance.) }
+{ Finds the distance between two creatures, building the target list with terrain ignored; the previous list is put back
+  afterwards. Note: the target count is not put back with the list.
+  @param(creature The first creature.)
+  @param(other The second creature.)
+  @returns(The distance in cells.) }
 function CalcDistance(creature, other: Types.PCharRecord): Byte;
 
-{ Ends a creature's actions for the round: clears its initiative, casting, guarding and movement.
+{ Ends a creature's actions for the round: clears its initiative, spell being cast, guard and movement.
   @param(creature The creature.)
-  @returns(Always True.) }
+  @returns(True.) }
 function EndActions(creature: Types.PCharRecord): Boolean;
 
 { Ends a creature's round on guard, and says so.
@@ -238,9 +214,6 @@ procedure PrintPositionAndTime;
 { Switches to the outdoor interface and draws it: the wilderness windows and views, the status line and the party. }
 procedure DisplayWildernessInterface;
 
-{ Empty routine with no callers. }
-procedure NoopCharHlp;
-
 { Draws the combat screen: the combat palette, the two combat windows, the cleared bottom rows, and the combat view
   redrawn around its center. }
 procedure DisplayCombatInterface;
@@ -263,12 +236,11 @@ function HasRangedWeapon(creature: Types.PCharRecord): Boolean;
   @returns(True for a throwable weapon.) }
 function HasThrowableWeapon(creature: Types.PCharRecord): Boolean;
 
-{ Finds the item that does the damage in a ranged attack: the readied weapon itself when thrown, else the readied arrows
-  for a bow or the readied quarrels for a crossbow, or nil when there is none.
+{ Finds the item that does the damage of a ranged attack: a thrown weapon itself, else the arrows readied with a bow or
+  the quarrels readied with a crossbow. A launcher that needs neither counts with no item.
   @param(creature The creature.)
   @param(sel Receives the item, or nil.)
-  @returns(True when an item is found, and also for a weapon whose properties are exactly $0A, which needs no
-    ammunition.) }
+  @returns(True when the attack has something to do the damage.) }
 function FindDamagingRangedWeapon(creature: Types.PCharRecord; var sel: Types.PItemRec): Boolean;
 
 { Tells whether a creature has reached its race's level limit in a class. Fighter limits rise with high Strength, and a
@@ -277,6 +249,28 @@ function FindDamagingRangedWeapon(creature: Types.PCharRecord; var sel: Types.PI
   @param(cls The class.)
   @returns(True at the limit.) }
 function AtLevelCap(creature: Types.PCharRecord; cls: ShortInt): Boolean;
+
+{ Finds a creature's encumbrance allowance in coins for its Strength; low Strength gives a negative allowance, while 0
+  gives none.
+  @param(creature The creature.)
+  @returns(The allowance.) }
+function WeightAllowance(creature: Types.PCharRecord): Integer;
+
+{ Finds a creature's missile to-hit adjustment for Dexterity: -4 below 3, rising from -3 at 3 to +3 at 18, then +3 to +5
+  for higher scores.
+  @param(creature The creature.)
+  @returns(The adjustment.) }
+function DexMissileAdjust(creature: Types.PCharRecord): ShortInt;
+
+{ Finds a creature's to-hit adjustment for Strength, 0 unless its Strength bonus applies.
+  @param(creature The creature.)
+  @returns(The adjustment.) }
+function StrToHitAdjust(creature: Types.PCharRecord): ShortInt;
+
+{ Finds a creature's damage adjustment for Strength, 0 unless its Strength bonus applies.
+  @param(creature The creature.)
+  @returns(The adjustment.) }
+function StrDamageAdjust(creature: Types.PCharRecord): ShortInt;
 
 implementation
 
@@ -287,13 +281,12 @@ const
 type
   TAcAdjust = array[0..4] of ShortInt;
 
-{ Sets the readied weapon's THAC0 and damage. THAC0 starts from its base, plus the Dexterity missile adjustment for a
-  missile weapon and the Strength to-hit bonus for a weapon that uses Strength, which also adds the Strength damage
-  bonus. The damage modifier starts from the weapon's small-target modifier. The weapon's plus and its ammunition's plus
-  (the readied quarrels or arrows it fires) are added to both the damage modifier and THAC0; an elf adds 1 more to THAC0
-  alone with the bows and item types 36 and 37. The damage dice are the small-target dice. Does nothing without a
-  readied weapon.
-  @param(creature The character.) }
+{ Recomputes to-hit and the main attack's damage for a readied weapon. The THAC0 value restarts from its base plus the
+  Dexterity missile adjustment and the Strength to-hit adjustment where the weapon takes them; the damage dice and bonus
+  come from the weapon's small-and-medium entry plus the Strength damage adjustment. The weapon's plus, and that of the
+  readied quarrels or arrows it fires, is added to both. An elf gets 1 more to hit with a bow, a long sword or a short
+  sword. Nothing changes without a readied weapon.
+  @param(creature The creature.) }
 procedure WeaponAdjust(creature: Types.PCharRecord);
 var
   w: Types.PItemRec;
@@ -328,10 +321,10 @@ begin
   creature^.curDiceA[1] := GDVars.baseItems[wtype].dmgSmDice;
 end;
 
-{ Sets movement from readied body armor's weight: the base movement up to 150, 9 up to 399, else 6; magic armor adds 3
-  when that leaves 9 or less.
-  @param(creature The character.)
-  @param(item A readied item; anything but body armor is ignored.) }
+{ Sets a creature's movement from readied body armor's weight: up to 150 keeps the base movement, up to 399 gives 9 and
+  heavier gives 6, then 3 more when the armor has a plus and the movement is 9 or less. Other items change nothing.
+  @param(creature The creature.)
+  @param(item The item.) }
 procedure ArmorMoveAdjust(creature: Types.PCharRecord; item: Types.PItemRec);
 begin
   if GDVars.baseItems[item^.itemType].slot = C_Equip.ARMOR then begin
@@ -354,7 +347,7 @@ end;
   @param(creature The creature.)
   @param(item The item.)
   @param(adj The adjustments: 0 Dexterity, 1 shield, 2 pluses of armor-class-0 items, 3 best ring, 4 best armor.)
-  @param(isMagicBody Set when the best armor becomes magical body armor.) }
+  @param(isMagicBody Set to True when the best armor becomes magical body armor.) }
 procedure AddItemArmorAdjust(creature: Types.PCharRecord; item: Types.PItemRec; var adj: TAcAdjust;
                              var isMagicBody: Boolean);
 var
@@ -734,10 +727,9 @@ begin
   end;
 end;
 
-{ Converts Strength to one scale: 0..17 as is; 18 by exceptional Strength (without it 18, 01-50 19, 51-75 20, 76-90 21,
-  91-99 22, 00 23); 19..25 become 24..30. Note: other values leave the result undefined.
+{ Maps a creature's Strength, with exceptional Strength at 18, onto the 0 to 30 scale the Strength tables use.
   @param(creature The creature.)
-  @returns(Strength on that scale.) }
+  @returns(The scaled Strength.) }
 function TranslatedStrength(creature: Types.PCharRecord): Byte;
 begin
   case creature^.strCur of
@@ -1101,6 +1093,7 @@ var
   reps: Byte;
 begin
   if GDVars.ifcState = C_Ifc.IN_COMBAT then begin
+    SoundDrv.SoundSetAutoStop(0);
     if effect then
       cell := 22
     else
@@ -1126,6 +1119,7 @@ begin
         Delay(70);
         Blit.BlitTileClipped(gx, gy, 0, 0, GDVars.saveUnder, GDVars.viewBuffer);
       end;
+    SoundDrv.SoundSetAutoStop(10);
     Blit.FlushView;
     if reps = 0 then
       TextRend.PauseOnly;
@@ -1508,10 +1502,6 @@ begin
             AtLevelCap := True;
     end;
   end;
-end;
-
-procedure NoopCharHlp;
-begin
 end;
 
 begin

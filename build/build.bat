@@ -1,9 +1,10 @@
 @echo off
-rem Build the Pool of Radiance v11 source tree, including sounddrv.asm.
-rem build.sh runs this batch from e:\src with C: games, D: compiler,
-rem E: this version tree, and F: TASM. It creates e:\obj for outputs.
-rem Keep PATH at the compiler root to avoid DOS 8.3 directory aliases.
-rem Remove stale units and objects from both source and output directories.
+rem Pool of Radiance v1.2: assemble and rebuild START.EXE and GAME.OVR.
+rem Run from e:\src through gametools/build.sh. It mounts this version
+rem as E:, the compiler directory as D:, and TASM as F:.
+rem Keep PATH at d:\ to avoid DOS short-name conversion of toolchain paths.
+rem The driver creates e:\obj; compiler and assembler outputs belong there.
+rem Remove stale units and objects from both search locations before rebuilding.
 if exist *.TPU del *.TPU
 if exist *.OBJ del *.OBJ
 if exist e:\obj\*.TPU del e:\obj\*.TPU

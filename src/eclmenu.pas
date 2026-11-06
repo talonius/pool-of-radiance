@@ -4,19 +4,22 @@ unit EclMenu;
 
 interface
 
-uses Types, Portrait, Crt, C_Area, C_Npc, C_Save, GDConsts, GDVars, TextRend, DaxIo, CharHlp, MenuCore,
-  MapView, SaveLoad, ViewChar, FxEngine, View3D, MapTiles, C_Ecl, C_Keys, C_Status, C_Gbvm, C_Dir, C_Money;
+uses Types, Crt, C_Area, C_Npc, C_Save, C_Msg, GDConsts, GDVars, Portrait, TextRend, DaxIo, CharHlp,
+  MenuCore, MapView, SaveLoad, ViewChar, FxEngine, View3D, MapTiles, C_Effect, C_Ecl, C_Keys, C_Status, C_Gbvm, C_Dir,
+  C_Money;
 
-{ Reads the value of a loaded script argument: type 0 is an immediate byte, types 1, 3 and $80 read the GBVM word at the
-  argument's address, and types 2 and $81 are an immediate word. Other types leave the result undefined.
-  @param(idx The argument, from 1.)
-  @returns(The argument's value.) }
+{ Gives the value of a loaded ECL variable: type 0 its byte, types 1 and 3 the GBVM word at its address, type 2 its
+  word, and $81 (a string reference) its GBVM address. Note: the locals are named backwards, vHi holding the variable's
+  low byte; and $80 (a string value) also reads the GBVM, at an address made of the packed length and a stale high byte.
+  @param(idx The variable, from 1.)
+  @returns(The value.) }
 function GetEclVar(idx: ShortInt): Word;
 
-{ Decodes the arguments of the current script command: each has a type byte and a low byte, and types 1..3 add a high
-  byte. Type $80 is an inline packed string of that length and $81 the address of a string; both go to the next script
-  string. Leaves the instruction pointer on the next command.
-  @param(count The number of arguments.) }
+{ Reads ECL variables at the ECL IP into eclVarType, eclVarLo and eclVarHi. Each variable has a type byte and a low
+  byte; types 1 to 3 add a high byte. A string value ($80, its low byte the packed length) is decoded into gbStrings,
+  and a string reference ($81, with a high byte) has the string at that GBVM address copied there. The IP ends on the
+  byte after the last variable.
+  @param(count The number of variables.) }
 procedure LoadEclVars(count: Byte);
 
 { Resets the ECL state, reads the five script entry addresses from the header at $9900 and selects the 3D view. Unless a
@@ -24,12 +27,9 @@ procedure LoadEclVars(count: Byte);
   instead. }
 procedure EclInit;
 
-{ Empty routine with no callers. }
-procedure NoopEclmenu;
-
-{ Loads a script block from ECL<disk>.DAX into the cleared script zone, skipping its 2-byte header, and keeps retrying
-  (with disk prompts on) until the block loads.
-  @param(scriptId The script's block in the file.) }
+{ Loads an ECL script from ECL<disk>.DAX into the script zone, which is cleared first, retrying until the block gives at
+  least two bytes; its first two bytes are skipped.
+  @param(scriptId The script's block.) }
 procedure LoadEclScript(scriptId: Byte);
 
 { Allocates and loads a monster.
@@ -40,15 +40,15 @@ procedure LoadEclScript(scriptId: Byte);
 procedure InitCreature(id: Byte; var creature: Types.PCharRecord; var inv: Types.PItemRec;
                        var effect: Types.PEffectRec);
 
-{ Works out how far ahead a monster can appear. Outside the 3D view it is 2, also stored as the zone's monster distance;
-  in it, the number of open cells (at most 2) walking from the position in the facing before a wall.
-  @param(x The starting column.)
-  @param(y The starting row.)
-  @param(facing The direction, 0, 2, 4 or 6.)
-  @returns(The distance in cells, 0..2.) }
+{ Finds the farthest distance, 0 to 2, at which monsters may appear in front of the party: 2 when the 3D-view flag is 0
+  (also stored in MONSTER_DISTANCE), otherwise the open cells ahead before the first wall, at most 2.
+  @param(x Map column of the party's cell.)
+  @param(y Map row of the party's cell.)
+  @param(facing The direction the party faces.)
+  @returns(The distance.) }
 function MaxMonsterDist(x, y, facing: Byte): Byte;
 
-{ Records a portrait's head and body, loads them and shows them at cell (3, 3).
+{ Loads and shows a portrait, remembering its head and body for later redraws.
   @param(headId The head picture.)
   @param(bodyId The body picture.) }
 procedure DisplayPortrait(headId, bodyId: Byte);
@@ -108,22 +108,22 @@ procedure WriteGbvm(address, value: Word);
   @returns(The value.) }
 function ReadGbvm(address: Word): Word;
 
-{ Writes a string, zero-terminated, at a GBVM address in any zone; the zone-1 base address sets the current character's
-  name instead. Addresses outside the zones are ignored.
-  @param(address The GBVM address.)
+{ Writes a string to the GBVM, zero-terminated, one character per cell (words in zones 0 to 2, bytes in zone 3). GBVM
+  $6B00 instead sets the current character's name, capped at 15 characters; zone 4 writes nothing.
+  @param(address The address.)
   @param(s The string.) }
 procedure WriteGbvmString(address: Word; s: String);
 
-{ Decodes packed 6-bit game characters at the script's instruction pointer into a script string, four characters to
-  three bytes; zero characters are dropped. The instruction pointer ends on the last byte read.
+{ Decodes packed 6-bit game characters after the ECL IP into a string, four characters to three bytes; zero characters
+  are dropped. The IP ends on the last byte read.
   @param(len The number of packed bytes.)
-  @param(strIdx The script string to fill.) }
+  @param(strIdx The gbStrings entry to fill.) }
 procedure ConvGbString(len, strIdx: Byte);
 
-{ Copies the zero-terminated string at a GBVM address into a script string. The zone-1 base address gives the current
-  character's name; addresses outside the zones give an empty string.
-  @param(strIdx The script string filled.)
-  @param(address The GBVM address.) }
+{ Copies the zero-terminated GBVM string at an address into a string, one character per cell (the low byte of a word
+  cell). GBVM $6B00 gives the current character's name, and zone 4 an empty string.
+  @param(strIdx The gbStrings entry to fill.)
+  @param(address The address.) }
 procedure DerefGbString(strIdx: Byte; address: Word);
 
 { Runs a horizontal menu with ~ hotkeys; extended keys select the previous or next character.
@@ -167,13 +167,13 @@ procedure EclCompareStr(leftOperand, rightOperand: String);
   @param(rightOperand The right side.) }
 procedure EclCompareInt(leftOperand, rightOperand: Word);
 
-{ Pushes the instruction pointer on the script return stack and jumps to the address in a loaded argument.
-  @param(varIdx The argument holding the address.) }
+{ Pushes the ECL IP on the return stack, then jumps to the address in a loaded variable.
+  @param(varIdx The variable holding the address.) }
 procedure EclGosub(varIdx: Byte);
 
 { Sets up a duel: each creature not named as the current character is disabled. A mirror duel appends a hostile copy of
   the current character named ROLF, with the CPIC icon; its items are copied in reverse order and its effects are not.
-  @param(mirror Nonzero for a mirror duel; stored in the mirror-duel script variable.) }
+  @param(mirror Nonzero for a mirror duel; stored in MIRROR_DUEL.) }
 procedure CharFightsAlone(mirror: ShortInt);
 
 { Steps the party one cell forward, wrapping at the map's edges, then refreshes the cell's event and the wall ahead. }
@@ -189,6 +189,24 @@ procedure RobMoney(fraction: Real; creature: Types.PCharRecord);
   @param(chance The chance, in percent.)
   @param(creature The creature.) }
 procedure RobItems(chance: Byte; creature: Types.PCharRecord);
+
+{ Steps the ECL IP past the command at it without running it, loading the command's variables; an opcode not listed
+  skips one byte. }
+procedure SkipEclCmd;
+
+{ Finds the party's highest and lowest movement, haste doubling and otherwise slow halving it. Both start from the first
+  member's unadjusted movement, so that value always lies within them. Note: the first member is read before the check
+  for nil, so an empty party is read through nil.
+  @param(hiMove Receives the highest movement.)
+  @param(loMove Receives the lowest movement.) }
+procedure MoveExtremes(var hiMove, loMove: Byte);
+
+{ Deals script damage to a creature with a message, then redraws the party panel; a dead creature is skipped. The
+  creature dies when the damage is more than 10 above its hit points; otherwise the message gives the damage, at most
+  three digits. When the message window is full it waits for a key first.
+  @param(dmg The damage.)
+  @param(creature The creature.) }
+procedure EclInflictDamage(dmg: Word; creature: Types.PCharRecord);
 
 implementation
 
@@ -828,10 +846,10 @@ begin
   end;
 end;
 
-{ Prepares a script menu string: lowercases it, removes each '~' and uppercases the letter after it as a hotkey. Note:
-  the lowercasing adds $20 to digits too, turning them into letters P..Y.
-  @param(menu The menu string, prepared in place.)
-  @param(opts Receives the hotkeys in order.) }
+{ Prepares a menu with ~ hotkeys: letters and digits are lowered (digits shift by 32 too), each ~ is taken out and the
+  character after it raised and collected as a hotkey.
+  @param(menu The menu, edited in place.)
+  @param(opts Receives the hotkeys.) }
 procedure MenuToOptions(var menu: String; var opts: Types.TStr40);
 var
   i: Byte;
@@ -960,7 +978,7 @@ begin
     p := p^.nextCharAddr;
   end;
   if mirror = 0 then Exit;
-  MapTiles.LoadIconAnim('cpic', 11, GDVars.iconAnim);
+  MapTiles.LoadIconAnim('CPIC', 11, GDVars.iconAnim);
   p := GDVars.creatureList;
   while p^.nextCharAddr <> nil do
     p := p^.nextCharAddr;
@@ -1031,8 +1049,84 @@ begin
   end;
 end;
 
-procedure NoopEclmenu;
+procedure SkipEclCmd;
 begin
+  GDVars.curOpcode := GDVars.zone3^[GDVars.eclIp];
+  case GDVars.curOpcode of
+    C_Ecl.OP_GOTO, C_Ecl.GOSUB, C_Ecl.LOAD_CHARACTER, C_Ecl.PICTURE, C_Ecl.PRINT, C_Ecl.PRINT_CLEAR,
+        C_Ecl.PARTY_STRENGTH, C_Ecl.NEW_ECL, C_Ecl.CALL,
+    C_Ecl.FIND_ITEM, C_Ecl.CLOCK, C_Ecl.ADD_NPC, C_Ecl.OP_PROGRAM, C_Ecl.WHO, C_Ecl.PROTECTION:
+      EclMenu.LoadEclVars(1);
+    C_Ecl.COMPARE, C_Ecl.OP_RANDOM, C_Ecl.SAVE, C_Ecl.SETUP_MONSTER, C_Ecl.INPUT_NUMBER, C_Ecl.INPUT_STRING,
+        $1F, C_Ecl.PARTY_SURPRISE:
+      EclMenu.LoadEclVars(2);
+    C_Ecl.ADD..C_Ecl.MULTIPLY, C_Ecl.LOAD_MONSTER, C_Ecl.LOAD_FILES, C_Ecl.ROB, C_Ecl.GET_TABLE,
+        C_Ecl.OP_AND, C_Ecl.OP_OR, C_Ecl.SAVE_TABLE,
+    C_Ecl.LOAD_PIECES, C_Ecl.SPELL:
+      EclMenu.LoadEclVars(3);
+    C_Ecl.COMPARE_AND, C_Ecl.SURPRISE:
+      EclMenu.LoadEclVars(4);
+    C_Ecl.DAMAGE:
+      EclMenu.LoadEclVars(5);
+    C_Ecl.CHECK_PARTY, C_Ecl.PARLAY:
+      EclMenu.LoadEclVars(6);
+    C_Ecl.TREASURE:
+      EclMenu.LoadEclVars(8);
+    C_Ecl.ENCOUNTER:
+      EclMenu.LoadEclVars(14);
+  else
+    Inc(GDVars.eclIp);
+  end;
+end;
+
+procedure MoveExtremes(var hiMove, loMove: Byte);
+var
+  p: Types.PCharRecord;
+  effect: Types.PEffectRec;
+  m: Byte;
+begin
+  p := GDVars.creatureList;
+  hiMove := p^.movementCur;
+  loMove := p^.movementCur;
+  while p <> nil do begin
+    m := p^.movementCur;
+    if CharHlp.HasEffect(p, C_Effect.HASTED, effect) then
+      m := m * 2
+    else if CharHlp.HasEffect(p, C_Effect.SLOWED, effect) then
+      m := m div 2;
+    if m > hiMove then hiMove := m;
+    if m < loMove then loMove := m;
+    p := p^.nextCharAddr;
+  end;
+end;
+
+procedure EclInflictDamage(dmg: Word; creature: Types.PCharRecord);
+var
+  { Unused in this version; see the other implementations of this routine. }
+  damageType: Byte;
+  msg: String;
+  dmgStr: String[3];
+  pause: Boolean;
+begin
+  if creature^.status = C_Status.DEAD_STATUS then Exit;
+  pause := False;
+  Str(dmg, dmgStr);
+  if creature^.hpCur + 10 < dmg then
+    msg := '  ' + creature^.name + ' dies. '
+  else
+    msg := '  ' + creature^.name + ' is hit FOR ' + dmgStr + ' points of Damage.';
+  if GDVars.curRow > C_Msg.TEXT_BOTTOM then begin
+    GDVars.curRow := C_Msg.MESSAGE_TOP;
+    pause := True;
+    TextRend.DisplayAndPause(White, 'press <enter>/<return> to continue');
+  end else
+    pause := False;
+  GDVars.curCol := C_Msg.TEXT_RIGHT;
+  TextRend.DisplayMessageWindow(C_Msg.TEXT_LEFT, C_Msg.MESSAGE_TOP, C_Msg.TEXT_RIGHT, C_Msg.TEXT_BOTTOM,
+                                White, pause, msg);
+  CharHlp.InflictDamage(creature, dmg);
+  TextRend.ClearRect(17, 1, 38, 15);
+  CharHlp.DisplayParty(GDVars.curChar);
 end;
 
 begin

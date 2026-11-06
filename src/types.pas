@@ -319,8 +319,6 @@ type
         { scroll spell slots }
         spells: array[1..3] of Byte);
   end;
-  PBytes = ^TBytes;
-  PImgBuf = ^TImgBuf;
   TArenaLoc = record
     { Arena coordinates. }
     x: ShortInt;
@@ -337,7 +335,6 @@ type
     hi: ShortInt;
   end;
   TBrkSet = set of ' '..'?';
-  TBytes = array[0..65000] of Byte;
   { main-menu entry }
   TMenuItem = record
     { first character is the hotkey }
@@ -345,7 +342,6 @@ type
     { MainMenu updates availability }
     enabled: Byte;
   end;
-  TColorMap = array[0..7] of Byte;
   TColorTab = array[0..15] of Byte;
   TCombatTarget = record
     { arena registration index }
@@ -360,26 +356,6 @@ type
     dx: ShortInt;
     { cell Y offset }
     dy: ShortInt;
-  end;
-  TImgBuf = record
-    { image height in pixels }
-    height: Word;
-    { image width in CHARS (x8 for pixels) }
-    width: Word;
-    { image placement X from DAX header }
-    originX: Word;
-    { image placement Y from DAX header }
-    originY: Word;
-    { images in buffer }
-    count: Byte;
-    { EGA->CGA color map }
-    map: TColorMap;
-    { bytes in one image }
-    imgSize: Word;
-    { extra transparency space (default nil) }
-    transp: PBytes;
-    { image data (open-ended) }
-    data: array[0..32000] of Byte;
   end;
   TName15 = string[15];
   TRandomItemTemplate = record
@@ -530,6 +506,30 @@ type
   TGbvmZone1 = array[$6B00..$6EFF] of Word;
 
   { Blit types. }
+  PBytes = ^TBytes;
+  PImgBuf = ^TImgBuf;
+  TBytes = array[0..65000] of Byte;
+  TColorMap = array[0..7] of Byte;
+  TImgBuf = record
+    { image height in pixels }
+    height: Word;
+    { image width in CHARS (x8 for pixels) }
+    width: Word;
+    { image placement X from DAX header }
+    originX: Word;
+    { image placement Y from DAX header }
+    originY: Word;
+    { images in buffer }
+    count: Byte;
+    { EGA->CGA color map }
+    map: TColorMap;
+    { bytes in one image }
+    imgSize: Word;
+    { extra transparency space (default nil) }
+    transp: PBytes;
+    { image data (open-ended) }
+    data: array[0..32000] of Byte;
+  end;
   TVideoMode = (Cga, Ega, Tandy);
 
   { Border types. }

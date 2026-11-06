@@ -1,10 +1,10 @@
 { Text-window borders, rectangle clearing and centered titles. Borders use the 8x8 symbol set. }
-{$O+,F+}
+{$O-,F+}
 unit Border;
 
 interface
 
-uses Types, TextRend, Sym8x8, Video, Crt, C_Video, GDConsts, GDVars;
+uses Types, Crt, C_Video, GDConsts, GDVars, TextRend, Sym8x8;
 
 { Draws a border one cell outside a rectangle of character cells, in 8x8 symbols: the corner symbol at the four corners,
   the horizontal symbol along the top and bottom and the vertical symbol down both sides.
@@ -16,7 +16,7 @@ uses Types, TextRend, Sym8x8, Video, Crt, C_Video, GDConsts, GDVars;
 procedure DrawBorder(ulCol, ulRow, lrCol, lrRow: ShortInt; corner: Byte);
 
 { Clears a rectangle of character cells, corners included, to color 0 directly in video memory. CGA clears the four
-  scanlines of each cell row in both of its banks, EGA clears both display pages through Video.FillRectEga, and Tandy
+  scanlines of each cell row in both of its banks, EGA clears both display pages through TextRend.FillRectEga, and Tandy
   clears two scanlines in each of its four banks.
   @param(ulCol Left column.)
   @param(ulRow Top row.)
@@ -92,8 +92,8 @@ begin
       end;
     end;
     Types.Ega: begin
-      Video.FillRectEga(ulCol, ulRow, lrCol, lrRow, 0, Black);
-      Video.FillRectEga(ulCol, ulRow, lrCol, lrRow, 1, Black);
+      TextRend.FillRectEga(ulCol, ulRow, lrCol, lrRow, 0, Black);
+      TextRend.FillRectEga(ulCol, ulRow, lrCol, lrRow, 1, Black);
     end;
     Types.Tandy: begin
       top := ulRow * 2;

@@ -4,7 +4,7 @@ unit Explore;
 
 interface
 
-uses Types, C_Area, C_Time, C_Msg, GDConsts, GDVars, SoundDrv, Crt, TextRend, Border, CharHlp,
+uses Types, Crt, C_Area, C_Time, C_Msg, GDConsts, GDVars, SoundDrv, TextRend, Border, CharHlp,
   Blit, MenuCore, Portrait, Camp, ViewChar, GameTime, FxEngine, View3D, MapTiles, C_Ecl, C_Keys, C_Class, C_Status,
   C_Gbvm, C_Dir, C_Sound;
 
@@ -12,9 +12,8 @@ uses Types, C_Area, C_Time, C_Msg, GDConsts, GDVars, SoundDrv, Crt, TextRend, Bo
   On the 3D map an open way (barrier type 1) steps forward. A door (type 2 or 3) offers a Locked menu built from the
   door choices still open: Bash, Pick when the party has a thief, Knock (on type 2 when someone has Knock memorized, on
   type 3 when the party has a magic-user) and Exit; with nothing but Exit the door becomes a wall. On a type 3 door Pick
-  only closes that choice. A step that fails, or a wall, plays the impact sound; a step plays the step sound once more
-  before moving. In the wilderness the party takes a wilderness step. The portrait and animation buffers are freed on
-  the way out. }
+  only closes that choice. A step that fails, or a wall, plays the impact sound. In the wilderness the party takes a
+  wilderness step. The portrait and animation buffers are freed on the way out. }
 procedure ResolveMovement;
 
 { Runs the 3D or wilderness command menu until a command ends it: Encamp; Look, which turns searching on for this cell,
@@ -157,10 +156,10 @@ begin
   PickLock := success;
 end;
 
-{ Finds a memorized spell in a character's spell slots.
+{ Finds a memorized spell.
   @param(spellId The spell.)
   @param(creature The character.)
-  @returns(The slot, or 255 when the spell is not memorized.) }
+  @returns(The first memorized-spell slot, 0 to 20, holding the spell; 255 when none does.) }
 function FindMemorizedSpell(spellId: Byte; creature: Types.PCharRecord): Byte;
 var
   i: Byte;
@@ -188,8 +187,8 @@ begin
   FindCharWithSpell := p;
 end;
 
-{ Spends the first memorized Knock spell in the party.
-  @returns(True when a member had Knock memorized.) }
+{ Has the first party member with Knock memorized use it on the door ahead, clearing the memorized slot.
+  @returns(True when someone had Knock memorized.) }
 function PartyCastsKnock: Boolean;
 var
   p: Types.PCharRecord;
@@ -202,8 +201,8 @@ begin
     PartyCastsKnock := False;
 end;
 
-{ Clears the zone's leave-map flag, then, when the barrier ahead lets the party through and the step would leave the
-  16x16 map, clamps the position to the edge and sets the flag. }
+{ Works out the step ahead on the 3D map without taking it. A step off the 16x16 map, unless a wall stands in the way,
+  puts the party on that edge and sets LEAVE_MAP; otherwise LEAVE_MAP is cleared. }
 procedure MoveForward;
 var
   nx: Integer;
@@ -236,13 +235,11 @@ begin
   end;
 end;
 
-{ Steps the party one cell forward on the 3D map with the step sound and a short pause, wrapping at the map's edges,
-  refreshes the wall ahead and the cell's event, reopens the door choices and advances the clock one minute, or one turn
-  while searching. }
+{ Steps the party one cell forward on the 3D map with the step sound, wrapping at the map's edges, refreshes the wall
+  ahead and the cell's event, reopens the door choices and advances the clock one minute, or one turn while searching. }
 procedure MovePartyForward3D;
 begin
   SoundDrv.SoundCommand(GDConsts.soundIds.combat[C_Sound.STEP]);
-  Delay(50);
   Inc(GDVars.partyPos.mapX, GDConsts.dirDx[GDVars.partyPos.facing]);
   Inc(GDVars.partyPos.mapY, GDConsts.dirDy[GDVars.partyPos.facing]);
   if GDVars.partyPos.mapX < 0 then GDVars.partyPos.mapX := 15;
@@ -310,7 +307,8 @@ begin
     C_Area.LOC_3D_MAP: begin
          done := False;
          repeat
-           c := MenuCore.MenuHorizontal('', GDConsts.menu3D, LightMagenta, LightGreen, White, True, False, ext);
+           c := MenuCore.MenuHorizontal('', GDConsts.menu3D, LightMagenta, LightGreen, White, True, False,
+                                        ext);
            if not ext then begin
              case c of
                'A': if GDVars.zone0^.noAutomap = 0 then begin
@@ -377,7 +375,8 @@ begin
         end;
         done := False;
         repeat
-          c := MenuCore.MenuHorizontal('', GDConsts.menuWild, LightMagenta, LightGreen, White, True, False, ext);
+          c := MenuCore.MenuHorizontal('', GDConsts.menuWild, LightMagenta, LightGreen, White, True, False,
+                                       ext);
           if not ext then begin
             case c of
               'C': Camp.NoncombatCastMenu;
@@ -442,8 +441,8 @@ begin
                 if menuStr = ' Exit' then
                   Explore.ChangeBarrierImpassable(GDVars.partyPos.mapX, GDVars.partyPos.mapY, GDVars.partyPos.facing)
                 else begin
-                  choice := MenuCore.MenuHorizontal('Locked. ', menuStr, LightMagenta, LightGreen, White, False,
-                                                    False, extendedKey);
+                  choice := MenuCore.MenuHorizontal('Locked. ', menuStr, LightMagenta, LightGreen,
+                                                    White, False, False, extendedKey);
                   case choice of
                     'B': moved := Explore.BashDoor;
                     'P': moved := Explore.PickLock;
@@ -463,8 +462,8 @@ begin
                 if menuStr = ' Exit' then
                   Explore.ChangeBarrierImpassable(GDVars.partyPos.mapX, GDVars.partyPos.mapY, GDVars.partyPos.facing)
                 else begin
-                  choice := MenuCore.MenuHorizontal('Locked. ', menuStr, LightMagenta, LightGreen, White, False,
-                                                    False, extendedKey);
+                  choice := MenuCore.MenuHorizontal('Locked. ', menuStr, LightMagenta, LightGreen,
+                                                    White, False, False, extendedKey);
                   case choice of
                     'B': moved := Explore.BashDoor;
                     'P': GDVars.doorOpen[1] := 0;
@@ -473,11 +472,9 @@ begin
                 end;
               end;
          end;
-         { Note: the step sound plays here and again in MovePartyForward3D. }
-         if moved then begin
-           SoundDrv.SoundCommand(GDConsts.soundIds.combat[C_Sound.STEP]);
-           Explore.MovePartyForward3D;
-         end else
+         if moved then
+           Explore.MovePartyForward3D
+         else
            SoundDrv.SoundCommand(GDConsts.soundIds.combat[C_Sound.IMPACT]);
          CharHlp.PrintPositionAndTime;
        end else

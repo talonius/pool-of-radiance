@@ -4,19 +4,14 @@ unit Intro;
 
 interface
 
-uses Types, GDConsts, GDVars, Crt, GameIo, TextRend, Blit, Border, Video, SoundDrv, C_Sound;
+uses Types, GDConsts, GDVars, Crt, GameIo, TextRend, Blit, Border;
 
 { Shows the title: title picture 1 for 5 seconds or until a key, with the game directory blanked while it loads. With
   the full intro it goes on to title picture 2 for another 5 seconds or until a key, on EGA flashing palette register 1
-  at random, and then the credits. Sound command 0 is sent at the start, before an early exit and before the credits;
-  with Tandy sound the title theme also plays. }
+  at random, and then the credits. }
 procedure Introduction;
 
 implementation
-
-const
-  { Sound-effect id }
-  SND_TITLE_THEME = 9;
 
 { Waits for a number of seconds or a keypress, whichever comes first, then discards pending keys.
   @param(seconds How long to wait.) }
@@ -43,6 +38,7 @@ begin
   TextRend.DisplayString(2, 3, LightGreen, 'david cook,steve winter,mike breault');
   TextRend.DisplayString(1, 5, LightGreen, 'game created by:');
   TextRend.DisplayString(18, 5, Yellow, 'ssi special projects');
+  TextRend.DisplayString(14, 6, LightCyan, 'version 1.2');
   TextRend.DisplayString(2, 7, Yellow, 'programming:');
   TextRend.DisplayString(20, 7, Yellow, 'original');
   TextRend.DisplayString(2, 8, LightCyan, 'scot bayless');
@@ -82,16 +78,12 @@ var
 begin
   rndAcc := 0;
   pic := nil;
-  SoundDrv.SoundCommand(GDConsts.soundIds.commands[1]);
-  if GDVars.soundMode = C_Sound.TANDY then
-    SoundDrv.SoundCommand(GDConsts.soundIds.combat[Intro.SND_TITLE_THEME]);
   savedDir := GDVars.gameDir;
   GDVars.gameDir[0] := #0;
   Blit.LoadPic('title', 1, False, 0, pic);
   Blit.ShowPic(0, 0, pic);
   Intro.DelayOrKey(5);
   if not GDVars.fullIntro then begin
-    SoundDrv.SoundCommand(GDConsts.soundIds.commands[1]);
     GDVars.gameDir := savedDir;
     Exit;
   end;
@@ -106,23 +98,22 @@ begin
       if rndAcc > 50000 then begin
         rndAcc := 0;
         for i := 0 to Random(3) + 1 do begin
-          Video.SetPaletteRegister(1, LightBlue);
+          Blit.SetPaletteRegister(1, LightBlue);
           Delay(150);
-          Video.SetPaletteRegister(1, LightCyan);
+          Blit.SetPaletteRegister(1, LightCyan);
           Delay(100);
-          Video.SetPaletteRegister(1, White);
+          Blit.SetPaletteRegister(1, White);
           Delay(50);
-          Video.SetPaletteRegister(1, LightCyan);
+          Blit.SetPaletteRegister(1, LightCyan);
           Delay(100);
-          Video.SetPaletteRegister(1, LightBlue);
+          Blit.SetPaletteRegister(1, LightBlue);
           Delay(150);
-          Video.SetPaletteRegister(1, Blue);
+          Blit.SetPaletteRegister(1, Blue);
         end;
       end;
     end;
   until KeyPressed or (TextRend.GetTicks >= deadline);
   GameIo.DiscardPendingKeys;
-  SoundDrv.SoundCommand(GDConsts.soundIds.commands[1]);
   Intro.Credits;
 end;
 

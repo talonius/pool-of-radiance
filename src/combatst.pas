@@ -5,20 +5,14 @@ unit CombatSt;
 interface
 
 uses Types, Crt, C_Area, C_Npc, C_Terr, C_Cond, GDConsts, GDVars, CbtActs, CharGen, FxEngine,
-  MenuCore, Portrait, View3D, CbtMap, MapTiles, CharHlp, Blit, TextRend, GameIo, SoundDrv, C_Ifc, C_Gbvm, C_Dir,
-  C_Sound;
+  MenuCore, Portrait, View3D, CbtMap, MapTiles, CharHlp, Blit, TextRend, GameIo, C_Ifc, C_Gbvm, C_Dir;
 
-{ Starts a battle: releases the animation and portrait pictures, plays the battle sting with Tandy sound, clears the
-  combat state, builds the arena, initializes and places the creatures and allocates the moving-icon frames. Then it
-  centers the view on the first creature, draws the combat interface, fires the start-of-combat effects and works out
-  the hostile hit-point percentage. }
+{ Starts a battle: releases the animation and portrait pictures, clears the combat state, builds the arena, initializes
+  and places the creatures and allocates the moving-icon frames. Then it centers the view on the first creature, draws
+  the combat interface, fires the start-of-combat effects and works out the hostile hit-point percentage. }
 procedure CombatStart;
 
 implementation
-
-const
-  { Sound-effect id }
-  SND_BATTLE_STING = 10;
 
 { Rolls 1d100 on each grass cell of the arena (terrain tile 22): 98 gives terrain 26, 99 gives 27, and 100 (unless under
   ECL script 10) a further 1 percent chance of 28 (1d10 of 1 to 6) or 29 (7 to 10). }
@@ -46,12 +40,13 @@ begin
       end;
 end;
 
-{ Classifies the edge between a map cell and its neighbor in a direction, from both sides. Off the map it is open on the
-  party's row going east or west, otherwise blocked.
-  @param(x Map column.)
-  @param(y Map row.)
-  @param(dir Direction of the neighbor.)
-  @returns(0 open, 1 blocked, 3 a wall that can be passed; the two sides' bits combined.) }
+{ Finds the wall between a dungeon cell and its neighbor in one direction, probing the edge from both sides and ORing
+  the two: 0 open, 1 solid, 3 a door (a wall with a passable barrier); solid on one side and a door on the other gives
+  3.
+  @param(x Map column of the cell.)
+  @param(y Map row of the cell.)
+  @param(dir The direction, a cardinal one.)
+  @returns(The wall kind.) }
 function WallBetween(x, y: ShortInt; dir: Byte): Byte;
 var
   nearKind: Byte;
@@ -111,7 +106,7 @@ var
       GDVars.arenaPtr^.cells[y, x] := t + 1;
   end;
 
-  { Draws the cell's three floor rows and its west wall or door. }
+  { The cell's floor (spots 0..5, rows 2..4) and its WEST wall }
   procedure DrawFloorWestWall;
   var
     c: Byte;
@@ -132,7 +127,7 @@ var
     end;
   end;
 
-  { Draws the current cell's north wall band (spots 3..4 on rows 0..1): wall terrain when solid, floor otherwise. }
+  { The NORTH wall band (spots (3..4, 0..1)): wall terrain when solid, floor otherwise }
   procedure DrawNorthWall;
   var
     { Unused in this version; see the other implementations of this routine. }
@@ -151,7 +146,7 @@ var
     end;
   end;
 
-  { Fills the cell's northwest corner by its walls and whether the corner between its neighbors is open. }
+  { Fills the cell's northwest corner, open when both edges beyond it are open. }
   procedure FillCornerNorthWest;
   var
     k: Byte;
@@ -539,8 +534,7 @@ begin
   CombatSt.SprinkleRareFeatures;
 end;
 
-{ Loads the combat tiles (DungCom in 3D, WildCom overland) and the random tiles (RandCom), allocates the arena with its
-  cursor off, and builds the dungeon or wilderness arena. }
+{ Loads the dungeon or wilderness combat tiles and the random-feature tiles, allocates the arena and builds it. }
 procedure LoadCombatTileSet;
 begin
   if GDVars.locType = C_Area.LOC_3D_MAP then
@@ -558,9 +552,9 @@ begin
     CombatSt.BuildWildernessArena;
 end;
 
-{ Gives each creature a zeroed combat record after recalculating its statistics: creatures past the party's size are
-  marked as non-party members, allies face the party's way and hostiles the other way, and a friendly non-party creature
-  with no morale, or one above 102, takes the zone's base morale as a non-player. }
+{ Recomputes each creature's stats and gives it a fresh combat record; the creatures past the party size are not party
+  members (notPcNpc 1). Creatures that are not hostile face the party's way, hostiles the opposite way. A friendly
+  creature outside the party whose morale is 0 or above 102 takes the morale threshold and becomes an NPC. }
 procedure InitCreatureCombatData;
 var
   p: Types.PCharRecord;
@@ -589,7 +583,7 @@ end;
 { Tells whether a placement square lies off the 11x6 grid on both axes.
   @param(qx The square's column.)
   @param(qy The square's row.)
-  @returns(True when both coordinates are off the grid.) }
+  @returns(True only when both coordinates are off the grid.) }
 function QuadFullyOff(qx, qy: ShortInt): Boolean;
 begin
   if ((qx >= 0) and (qx < 11)) or ((qy >= 0) and (qy < 6)) then
@@ -629,10 +623,8 @@ begin
 end;
 
 { Searches the team's placement grid for a square for a creature, in zigzag legs from the ring's start square. A leg
-  ends at a square partly off the grid or after a set number of tries, and the next leg starts a step further back; for
-  team 0 facing diagonally, ring 0's first step back is doubled when any of the ring's three directions is not walled
-  off (always outdoors). A square fully off the grid moves on to the next ring whose direction is not walled off (always
-  outdoors), up to ring 3.
+  ends at a square partly off the grid or after a set number of tries, and the next leg starts a step further back. A
+  square fully off the grid moves on to the next ring whose direction is not walled off (always outdoors), up to ring 3.
   @param(slot The creature's combat slot.)
   @returns(True when the creature was placed; False when no ring is left.) }
 function FindPlacement(slot: Byte): Boolean;
@@ -867,8 +859,6 @@ begin
   MenuCore.ClearBottomLine;
   TextRend.PauseOnly;
   TextRend.DisplayString(0, 24, LightGreen, 'A battle begins...');
-  if GDVars.soundMode = C_Sound.TANDY then
-    SoundDrv.SoundCommand(GDConsts.soundIds.combat[CombatSt.SND_BATTLE_STING]);
   GDVars.quickMagic := False;
   GDVars.roundCounter := 0;
   GDVars.attackRoll := 0;

@@ -5,7 +5,7 @@ unit CbtMap;
 
 interface
 
-uses Types, Crt, C_Terr, GDConsts, GDVars, MapTiles, Blit, TextRend, Video, SoundDrv, C_Ifc, C_Dir;
+uses Types, Crt, C_Terr, GDConsts, GDVars, MapTiles, Blit, TextRend, SoundDrv, C_Ifc, C_Dir;
 
 { Empty routine with no callers. }
 procedure NoopCbtMap;
@@ -39,8 +39,7 @@ procedure DrawCursorCell(x, y: ShortInt);
   @param(y Arena row of the cell.) }
 procedure RedrawArenaCell(x, y: ShortInt);
 
-{ Rebuilds the arena's creature-index grid: clears it, then for each creature with a nonzero icon size marks every cell
-  its icon covers with the creature's combat slot and recomputes the creature's view coordinates. }
+{ Rebuilds the arena's creature-index grid and each creature's view coordinates. }
 procedure BuildArenaArrays;
 
 { Looks up what lies on an arena cell.
@@ -69,9 +68,9 @@ function ViewCoordsValid(x, y: ShortInt): Boolean;
   @returns(True when the icon is visible; False when the creature has no icon.) }
 function CombatIconVisible(creature: Types.PCharRecord; whole: Byte): Boolean;
 
-{ Targets the arena cell one step in the given direction from a cell and redraws the whole view if needed
-  (BuildViewBuffer), redrawing each visible icon of a creature in play after a full redraw. Then redraws the cell, draws
-  the cursor at the target (kept inside the arena) and flushes the view.
+{ Targets the arena cell one step in dir from a cell and redraws the whole view if needed (BuildViewBuffer), redrawing
+  each visible icon of an enabled creature after a full redraw. Then redraws the cell, draws the cursor at the target
+  (kept inside the arena) and flushes the view.
   @param(x Arena column of the cell.)
   @param(y Arena row of the cell.)
   @param(delta How far the target may lie from the view center before the view moves; 255 forces a full redraw.)
@@ -102,9 +101,9 @@ function CombatCellY(creature: Types.PCharRecord): ShortInt;
   @returns(The icon size; 0 when it has no icon.) }
 function GetIconSize(creature: Types.PCharRecord): Byte;
 
-{ Finds a combatant's combat slot. Note: with no combatants, or more than 72, the search runs past the end of the table.
-  @param(creature The combatant.)
-  @returns(The slot, or 0 if it is not in the fight.) }
+{ Finds a creature in the combat creature table.
+  @param(creature The creature.)
+  @returns(Its index in the table, or 0 when it is not there.) }
 function CombatSlot(creature: Types.PCharRecord): Byte;
 
 { Probes the cells one step in dir from each of the creature's icon tiles.
@@ -121,15 +120,16 @@ procedure ProbeDirection(creature: Types.PCharRecord; dir: Byte; var crIdx, terr
   cell as a corpse (unless the cell holds a stinking cloud), plays the downed sound, removes the icon, refreshes the
   view's center cell (ScrollView), and clears the creature's initiative, movement, casting and guarding. Note: the check
   for an already recorded body tests downed[drawLoopIndex] instead of the entry it counts through, so it finds one only
-  when that entry happens to hold the creature.
+  when that entry happens to hold the creature. Sound auto-stop is off while it runs, and the early return for an
+  already recorded body leaves it off.
   @param(creature The creature that went down.) }
 procedure CreatureDowned(creature: Types.PCharRecord);
 
 { Places a creature on an arena cell if it fits. Outside combat it does nothing. In combat it places the creature at the
-  cell, probes its own cells and rejects the place, zeroing the icon size, on any creature, terrain 0 or impassable
-  terrain. On success with `moving` set, for a party member it clears the creature's body entries and, unless another
-  body lies on the cell, writes into it the terrain its last body covered, or the probed terrain when it has no body
-  entry or the body covered a corpse cell. The creature grid is then refilled.
+  cell (icon size from the low 7 bits of iconDimensions), probes its own cells and rejects the place, zeroing the icon
+  size, on any creature, terrain 0 or cost 255. On success with moving set and notPcNpc = 0, it clears the creature's
+  body entries and, unless another body lies on the cell, writes into it the terrain its last body covered, or the
+  probed terrain when it has no body entry or the body covered a corpse cell. The creature grid is then refilled.
   @param(creature The creature.)
   @param(x Arena column of the cell.)
   @param(y Arena row of the cell.)
@@ -144,11 +144,12 @@ function IsValidCreatureLoc(creature: Types.PCharRecord; x, y: Byte; moving: Boo
   @param(cursor True to draw the cursor.) }
 procedure DisplayMapViewCentered(creature: Types.PCharRecord; delta: Byte; cursor: Boolean);
 
-{ Recenters the 7x7 view on a target cell when it lies farther from the view center than allowed, keeping the view
-  inside the arena, then draws the view's terrain and recomputes the creatures' view coordinates.
-  @param(x Arena column of the target.)
-  @param(y Arena row of the target.)
-  @param(delta How far the target may lie from the view center; 255 forces a redraw.)
+{ Moves the view and repaints its terrain into the view buffer when a cell lies outside the band around the view's
+  center. The center moves toward the cell, kept where the whole 7x7 view stays inside the arena, and the creatures'
+  view coordinates are recomputed.
+  @param(x Arena column of the cell.)
+  @param(y Arena row of the cell.)
+  @param(delta How far the cell may lie from the view center; 255 forces a full redraw.)
   @returns(True when the view was redrawn.) }
 function BuildViewBuffer(x, y: ShortInt; delta: Byte): Boolean;
 
@@ -182,8 +183,8 @@ procedure SetCombatPalette;
 begin
   case GDVars.videoMode of
     Types.Ega: begin
-         Video.SetPaletteRegister(0, DarkGray);
-         Video.SetPaletteRegister(8, Black);
+         Blit.SetPaletteRegister(0, DarkGray);
+         Blit.SetPaletteRegister(8, Black);
        end;
   end;
 end;
@@ -192,8 +193,8 @@ procedure SetNoncombatPalette;
 begin
   case GDVars.videoMode of
     Types.Ega: begin
-         Video.SetPaletteRegister(0, Black);
-         Video.SetPaletteRegister(8, DarkGray);
+         Blit.SetPaletteRegister(0, Black);
+         Blit.SetPaletteRegister(8, DarkGray);
        end;
   end;
 end;
@@ -522,6 +523,7 @@ var
   { Unused in this version; see the other implementations of this routine. }
   delayTicks: Integer;
 begin
+  SoundDrv.SoundSetAutoStop(0);
   if GDVars.ifcState <> C_Ifc.IN_COMBAT then begin
     SoundDrv.SoundCommand(GDConsts.soundIds.combat[CbtMap.SND_DOWNED]);
     TextRend.PauseOnly;
@@ -561,6 +563,7 @@ begin
     creature^.combatAddr^.spellCast := 0;
     creature^.combatAddr^.guarding := 0;
   end;
+  SoundDrv.SoundSetAutoStop(10);
 end;
 
 function IsValidCreatureLoc(creature: Types.PCharRecord; x, y: Byte; moving: Boolean): Boolean;

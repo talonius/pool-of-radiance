@@ -25,15 +25,15 @@ function SpellSelection(selType: Byte; var idx: Integer): Byte;
   @returns(True when the list has entries.) }
 function GenerateSpellList(menuType: Byte): Boolean;
 
-{ Computes a spell's range.
+{ Works out a spell's range: its fixed range plus its range per level times the casting level, level 6 for an item. A
+  zero range with an area (touch) and the 255 attack-roll mark both become 1.
   @param(spell The spell.)
-  @returns(Its base plus its per-level range times the caster level (an item casts at level 6); a spell with an area
-    gets at least 1, and 255 becomes 1.) }
+  @returns(The range in cells.) }
 function CalcSpellRange(spell: Byte): Byte;
 
 { Picks the targets of a spell cast outside combat; it is installed as the cast-target handler outside combat. Target
-  mode 1 targets the caster, 2 asks for one party member (remembered for the next cast; giving up clears the targets and
-  the cast) and 4 targets each creature in the list; any other mode gives up the cast.
+  mode 1 targets the caster, 2 asks for one party member (remembered in castTarget; giving up clears the targets and the
+  cast) and 4 targets each creature in the list; any other mode gives up the cast.
   @param(spell The spell.)
   @param(b Unused.)
   @param(cast Receives True when targets were picked.) }
@@ -64,11 +64,11 @@ function ItemReadable(it: Types.PItemRec): Boolean;
   @param(spell The spell.) }
 procedure RemoveSpellFromScroll(cr: Types.PCharRecord; it: Types.PItemRec; spell: Byte);
 
-{ Reports a cast: in combat "Casts a Spell" and the spell's name on row 23; outside combat the caster's name, the given
-  text and the spell's name in the text window, then a pause.
+{ Announces a spell: in combat the creature casts a spell, with the spell's name on the bottom row; otherwise the
+  creature's name, the message and the spell's name show in the message window for the text delay.
   @param(creature The caster.)
-  @param(msg Printed after the caster's name outside combat.)
-  @param(spell The spell cast.) }
+  @param(msg The message, ignored in combat.)
+  @param(spell The spell.) }
 procedure PrintCastSpellMsg(creature: Types.PCharRecord; msg: Types.TStr40; spell: Byte);
 
 { Remove Curse (spellHandlers.spells[43], also called by Temple): remove Bestow Curse (effect 36) from spellTargets[1],
@@ -217,8 +217,8 @@ begin
     end;
 end;
 
-{ Clears the scroll table, then adds the spells of each readable item the current character carries, setting the casting
-  item to each in turn; the casting item ends as nil.
+{ Clears scrollPtrs and scrollCount, then adds the spells of each readable item the current character carries, through
+  castItem, which ends as nil.
   @param(forScribe True to add only the spells queued for scribing.) }
 procedure AddAllScrollSpells(forScribe: Boolean);
 var
@@ -290,8 +290,9 @@ begin
   CalcSpellRange := r;
 end;
 
-{ Works out a spell's duration: spells 40, 57, 59, 61 and 63 roll their own (63 longer outside combat), 67 lasts a day
-  (1440 minutes), and any other spell lasts its base plus its duration per level times the caster's level.
+{ Works out a spell's duration: its fixed duration plus its duration per level times the casting level, except for the
+  item spells that roll their own (Cause Disease, Potion of Speed, Wand of Paralyzation, Giant Strength, Dust of
+  Disappearance, Manual of Bodily Health).
   @param(spell The spell.)
   @returns(The duration in minutes.) }
 function CalcSpellDuration(spell: Byte): Word;
@@ -447,6 +448,7 @@ begin
         while not Pathing.IsDirToward(x, y, GDVars.targetX, GDVars.targetY, k) do
           Inc(k);
         CbtMap.SetCreatureFacing(p, k, 1, 0);
+        SoundDrv.SoundSetAutoStop(0);
         case spell of
           { Fireball: 11 }
           47: SoundDrv.SoundCommand(GDConsts.soundIds.combat[7]);
@@ -457,6 +459,7 @@ begin
           SoundDrv.SoundCommand(GDConsts.soundIds.commands[3]);
         end;
         CharHlp.CombatAnimateMovingIcon(x, y, GDVars.targetX, GDVars.targetY, 4, 30);
+        SoundDrv.SoundSetAutoStop(10);
         if CbtMap.CombatIconVisible(p, 0) then begin
           CbtMap.SetCreatureFacing(p, p^.combatAddr^.direction, 1, 1);
           CbtMap.SetCreatureFacing(p, p^.combatAddr^.direction, 0, 0);
@@ -486,9 +489,10 @@ begin
     Border.ClearBox(0, 23, 39, 23);
 end;
 
-{ Resolves the current spell on the targets of one side; Bless in combat also skips a target with an enemy next to it.
-  @param(hostFlag The side affected.)
-  @param(msg The effect's message.) }
+{ Resolves Bless or Curse for the targets on one team, dropping the others and, for Bless in combat, those with an enemy
+  beside them.
+  @param(hostFlag The team to keep: 0 the party's side, 1 the hostiles.)
+  @param(msg The effect message.) }
 procedure CastOneSide(hostFlag: ShortInt; msg: Types.TStr40);
 var
   i: Byte;
@@ -503,19 +507,19 @@ begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, msg);
 end;
 
-{ Casts Bless on the caster's own side. }
+{ Bless: apply the spell to the caster's own team (see CastOneSide). }
 procedure SpellBless;
 begin
   Magic.CastOneSide(GDVars.curChar^.hostile, 'is Blessed');
 end;
 
-{ Casts Curse on the caster's enemies. }
+{ Curse: apply the spell to the caster's enemies (see CastOneSide). }
 procedure SpellCurse;
 begin
   Magic.CastOneSide(CharHlp.EnemyTeam(GDVars.curChar), 'is Cursed');
 end;
 
-{ Casts Cure Light Wounds: restores 1d8 hit points to the first target. }
+{ Cure Light Wounds: restore 1d8 hit points to the first target. }
 procedure SpellCureLightWounds;
 begin
   if GDVars.spellTargetCount = 0 then
@@ -524,40 +528,40 @@ begin
     CharHlp.AnnounceHealStatus(GDVars.spellTargets[1]);
 end;
 
-{ Casts Cause Light Wounds: 1d8 magic damage. }
+{ Cause Light Wounds: 1d8 damage, element mask 8. }
 procedure SpellCauseLightWounds;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, FxEngine.RollDamageDice(1, 8), 8, '');
 end;
 
-{ Applies a detection spell's effect to the targets. }
+{ Shared handler for the detection-style spells: apply the spell's effect. }
 procedure SpellDetection;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is affected');
 end;
 
-{ Applies a protection spell's effect to the targets. }
+{ Shared handler for the protection spells: apply the spell's effect. }
 procedure SpellProtection;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is protected');
 end;
 
-{ Applies Resist Cold's effect to the targets. }
+{ Resist Cold: apply the spell's effect. }
 procedure SpellResistCold;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is cold-resistant');
 end;
 
-{ Casts Burning Hands: fire damage of 1 point per caster level. }
+{ Burning Hands: caster-level damage, element mask 9. }
 procedure SpellBurningHands;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, CharHlp.GetCasterLevel(GDVars.curSpell), 9,
                       '');
 end;
 
-{ Casts Charm Person: only targets of creature type 0 or 1 and icon size 1 can be charmed. The Charm effect's strength
-  holds the caster's side in bit 7 and the caster level; afterwards the target's first Charm effect (normally the one
-  just added) has its handler called as for an addition, not a removal. }
+{ Charm Person: only targets with charType 0..1 and icon size 1 can be charmed. The Charm effect's strength is the
+  caster's hostile * 128 + caster level; afterwards the target's first Charm effect (normally the one just added) has
+  its handler called with removed = False. }
 procedure SpellCharmPerson;
 var
   effect: Types.PEffectRec;
@@ -630,23 +634,22 @@ begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, cl div 2 + FxEngine.RollDamageDice(cl div 2, 4), 8, '');
 end;
 
-{ Applies Shield's effect to the targets. }
+{ Shield: apply the spell's effect. }
 procedure SpellShield;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is shielded');
 end;
 
-{ Casts Shocking Grasp: 1d8 plus the caster level in electrical damage. }
+{ Shocking Grasp: 1d8 + caster level damage, element mask $C. }
 procedure SpellShockingGrasp;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False,
                       FxEngine.RollDamageDice(1, 8) + CharHlp.GetCasterLevel(GDVars.curSpell), $C, '');
 end;
 
-{ Casts Sleep with a 4d4 hit-dice pool. Each target costs by its level: 0..1 costs 1, 2 costs 2, 3 costs 4, 4 costs 6, 5
-  costs 10 for a creature of the monster race and 20 otherwise, and higher levels cost 20. Animated dead, targets
-  already asleep and targets the remaining pool cannot pay for are dropped; the pool is spent greedily in target
-  order. }
+{ Sleep: a 4d4 hit-dice pool. Cost per target by levelHighest: 0..1 -> 1, 2 -> 2, 3 -> 4, 4 -> 6, 5 -> 10 for MONSTER
+  and 20 otherwise, higher -> 20. Animated dead (ANIMATED), targets already asleep (effect 53) and targets the remaining
+  pool cannot pay for are dropped; the pool is spent greedily in target order. }
 procedure SpellSleep;
 var
   i: Byte;
@@ -700,10 +703,12 @@ begin
     if GDVars.spellTargets[i] <> nil then begin
       tgt := GDVars.spellTargets[i];
       if i < GDVars.spellTargetCount then begin
+        SoundDrv.SoundSetAutoStop(0);
         SoundDrv.SoundCommand(GDConsts.soundIds.commands[3]);
         CharHlp.BuildIconFacings(18);
         CharHlp.CombatAnimateMovingIcon(CbtMap.CombatCellX(GDVars.curChar), CbtMap.CombatCellY(GDVars.curChar),
                                         CbtMap.CombatCellX(tgt), CbtMap.CombatCellY(tgt), 4, 30);
+        SoundDrv.SoundSetAutoStop(10);
       end;
       saved := FxEngine.RollSavingThrow(tgt, GDConsts.spellTable[GDVars.curSpell].saveType, smod);
       if (tgt^.charType > 1) or (tgt^.iconDimensions > 1) then
@@ -716,13 +721,13 @@ begin
   end;
 end;
 
-{ Applies Resist Fire's effect to the targets. }
+{ Resist Fire: apply the spell's effect. }
 procedure SpellResistFire;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is fire resistant');
 end;
 
-{ Applies Silence's effect to the targets. }
+{ Silence: apply the spell's effect. }
 procedure SpellSilence;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is silenced');
@@ -770,21 +775,20 @@ begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is charmed');
 end;
 
-{ Casts Spiritual Hammer: applies the spell's effect, then runs the Spiritual Hammer effect handler for the first
-  target. }
+{ Spiritual Hammer: apply the spell's effect, then run the Spiritual Hammer effect handler for the first target. }
 procedure SpellSpiritualHammer;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, True, 0, 0, '');
   FxEngine.CallEffectHandler(C_Effect.SPIRITUAL_HAMMER, GDVars.spellTargets[1], nil, False);
 end;
 
-{ Applies the Invisibility spells' effect to the targets. }
+{ Invisibility: apply the spell's effect. }
 procedure SpellInvisibility;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is invisible');
 end;
 
-{ Applies Knock's effect to the targets. }
+{ Knock: apply the spell's effect. }
 procedure SpellKnock;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'Knock-Knock');
@@ -796,7 +800,7 @@ begin
   Magic.ResolveSpell(GDVars.curSpell, FxEngine.RollDice(1, 4), False, 0, 0, 'is duplicated');
 end;
 
-{ Applies Ray of Enfeeblement's effect to the targets. }
+{ Ray of Enfeeblement: apply the spell's effect. }
 procedure SpellRayOfEnfeeblement;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is weakened');
@@ -919,11 +923,11 @@ begin
   FxEngine.AddEffect(tgt, C_Effect.STRENGTH, Magic.CalcSpellDuration(GDVars.curSpell), enc, True);
 end;
 
-{ Casts Animate Dead: animates up to caster-level dead human creatures whose cell is still a valid location. The
-  animation effect's strength is the old side times 16 plus the caster level. Each corpse joins the caster's side under
-  computer control, becomes undead (undead level 2, base movement 6, attack level 0), loses its memorized spells and
-  gets the animated NPC or player code; if it revives at its full maximum hit points it also gets the animation effect
-  and the animated status. }
+{ Animate Dead: animate up to caster-level dead (DEAD_STATUS) human (charType 0) creatures whose cell is still a valid
+  location. Effect 32's strength is the old hostile * 16 + caster level. Each corpse joins the caster's team under
+  computer control (quickfight 1), becomes undead (charType 4, levelUndead 2, movementBase 6, attackLevel 0), loses its
+  memorized spells and gets the animated NPC or PC npc code; if ReviveDeadCreature succeeds at full hpMax it also gets
+  effect 32 and ANIMATED. }
 procedure SpellAnimateDead;
 var
   i: Byte;
@@ -968,14 +972,14 @@ begin
   end;
 end;
 
-{ Casts Cure Blindness: ends the first target's blindness ('can see'). }
+{ Cure Blindness: remove the first target's blindness. }
 procedure SpellCureBlindness;
 begin
   if FxEngine.RemoveEffectWithMessage(GDVars.spellTargets[1], C_Effect.BLIND) then
     CharHlp.PrintNameStringAnim(GDVars.spellTargets[1], True, 'can see');
 end;
 
-{ Casts Cause Blindness: blinds the targets. }
+{ Cause Blindness: apply the spell's effect. }
 procedure SpellCauseBlindness;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is blind');
@@ -1002,7 +1006,7 @@ begin
   GDVars.effectLock := 0;
 end;
 
-{ Casts Cure Disease: removes the first target's disease effects. }
+{ Cure Disease: remove the first target's disease effects. }
 procedure SpellCureDisease;
 var
   { Unused in this version; see the other implementations of this routine. }
@@ -1011,7 +1015,7 @@ begin
   cured := Magic.RemoveDiseaseEffects;
 end;
 
-{ Applies Cause Disease's effect to the targets. }
+{ Cause Disease: apply the spell's effect. }
 procedure SpellCauseDisease;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, True, 0, 0, 'is diseased');
@@ -1058,7 +1062,7 @@ begin
   end;
 end;
 
-{ Casts Prayer: the effect with the caster's side in bit 4 and the caster level. }
+{ Prayer: apply the spell's effect at strength caster team * 16 + caster level. }
 procedure SpellPrayer;
 begin
   Magic.ResolveSpell(GDVars.curSpell,
@@ -1094,14 +1098,14 @@ begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'has been cursed!');
 end;
 
-{ Applies Blink's effect to the targets. }
+{ Blink: apply the spell's effect. }
 procedure SpellBlink;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is blinking');
 end;
 
-{ Casts Fireball: caster-level d6 fire damage (the item fireball rolls 3, 5 or 7 d6); outside 3D maps the targets are
-  every creature within 2 cells of the target cell. }
+{ Fireball: spell 64 (an item fireball) uses level 1d3 * 2 + 1. When zone0^.view3dFlag is 0 the target list is rebuilt
+  with Pathing.BuildTargetList, radius 2 around the aim cell. Damage is level d6, element mask 9. }
 procedure SpellFireball;
 var
   cl: Byte;
@@ -1149,7 +1153,7 @@ begin
       FxEngine.TriggerEffectsWithCondition(C_Cond.MOVE_ATTACK_RATE, GDVars.spellTargets[i]);
 end;
 
-{ Casts Haste on the caster's side; it removes Slow instead where there is one. }
+{ Haste: the caster's team loses Slowed or is hasted (see HasteSlowLogic). }
 procedure SpellHaste;
 begin
   Magic.HasteSlowLogic(C_Effect.SLOWED, GDVars.curChar^.hostile, 'is Hasted');
@@ -1277,17 +1281,16 @@ begin
   Magic.LightningPath(8, dmg, C_Save.SPELL, True);
 end;
 
-{ Casts Slow on the caster's enemies; it removes Haste instead where there is one. }
+{ Slow: the caster's enemies lose Hasted or are slowed (see HasteSlowLogic). }
 procedure SpellSlow;
 begin
   Magic.HasteSlowLogic(C_Effect.HASTED, CharHlp.EnemyTeam(GDVars.curChar), 'is Slowed');
 end;
 
-{ Casts Restoration: when the first target has a drained level, gives one back. Its maximum, current and rolled hit
-  points regain the drained hit points divided by the drained levels. Scanning each class, a class with a level becomes
-  the pick when that level is not above the current pick's, its next-level experience is nonzero and smaller, and it is
-  not at its level cap. The pick gains a level, experience is raised to its next-level experience if lower, class stats
-  are recomputed and 'is restored' is shown. Note: if no class qualifies, the class raised is undefined. }
+{ Restoration: give back one drained level. hpMax, hpCur and hpRolled regain drainedHps div drainedLevels. Scanning
+  classes 0..7, a class becomes the pick when its level is not above the current pick's, its next-level XP is nonzero
+  and smaller, and it is not at its level cap. The pick gains a level and experience is raised to its next-level XP if
+  lower. }
 procedure SpellRestoration;
 var
   tgt: Types.PCharRecord;
@@ -1330,7 +1333,7 @@ begin
   end;
 end;
 
-{ Removes Slow from the target, or else applies the Potion of Speed's effect. }
+{ Potion of Speed: remove Slowed, or else apply the potion's effect. }
 procedure SpellPotionOfSpeed;
 begin
   if not FxEngine.RemoveEffectWithMessage(GDVars.spellTargets[1], C_Effect.SLOWED) then
@@ -1366,7 +1369,7 @@ begin
                      Magic.CalcSpellDuration(GDVars.curSpell), enc, True);
 end;
 
-{ Casts the Javelin of Lightning: 1d6 + 20 damage at the aim cell and 20 along a three-cell bolt. }
+{ Javelin of Lightning: 1d6 + 20 damage at the aim cell, then a 3-cell bolt of 20 damage. }
 procedure SpellJavelinOfLightning;
 var
   blocked: Boolean;
@@ -1375,32 +1378,32 @@ begin
   Magic.LightningPath(3, 20, C_Save.SPELL, False);
 end;
 
-{ Applies the Wand of Paralyzation's effect to the targets ("is paralyzed"). }
+{ Wand of Paralyzation: apply the item's effect. }
 procedure SpellWandOfParalyzation;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is paralyzed');
 end;
 
-{ Heals the first target 2d4 + 2 hit points for the Potion of Healing. }
+{ Potion of Healing: restore 2d4 + 2 hit points. }
 procedure SpellPotionOfHealing;
 begin
   if FxEngine.RestoreHitPoints(GDVars.spellTargets[1], FxEngine.RollDice(2, 4) + 2, False) then
     CharHlp.PrintNameStringAnim(GDVars.spellTargets[1], True, 'is Healed');
 end;
 
-{ Applies the Dust of Disappearance's effect. }
+{ Dust of Disappearance: apply the item's effect. }
 procedure SpellDustOfDisappearance;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, 0, 0, 'is invisible');
 end;
 
-{ Deals the Wand of Magic Missiles' 2d4 + 2 magic damage. }
+{ Wand of Magic Missiles: 2d4 + 2 damage, element mask 8. }
 procedure SpellWandOfMagicMissiles;
 begin
   Magic.ResolveSpell(GDVars.curSpell, 0, False, FxEngine.RollDamageDice(2, 4) + 2, 8, '');
 end;
 
-{ Does nothing: an unused spell slot. }
+{ Unused item spell slot: does nothing. }
 procedure SpellNoEffect;
 begin
 end;

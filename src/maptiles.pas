@@ -6,7 +6,7 @@ unit MapTiles;
 
 interface
 
-uses Types, Blit, Crt, C_Tile, GDConsts, GDVars, GameIo, C_Dir;
+uses Types, Crt, C_Tile, GDConsts, GDVars, Blit, GameIo, C_Dir;
 
 { Empty routine with no callers. }
 procedure NoopMapTiles;
@@ -26,8 +26,8 @@ procedure Load24x24Set(name: string; mult: Byte; slot: ShortInt);
   @param(flag Unused.) }
 procedure Copy2DTile(col, row: ShortInt; tile: Byte; flag: ShortInt);
 
-{ Frees both frames of an icon animation slot.
-  @param(animIdx The slot.) }
+{ Releases both frames of an icon-animation slot.
+  @param(animIdx The icon-animation slot.) }
 procedure FreeIconAnim(animIdx: Byte);
 
 { Loads both frames of an icon-animation slot, blocks fileId and fileId + 128, with color 0 transparent, then discards

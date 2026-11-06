@@ -502,6 +502,9 @@ var
   soundMode: Byte;
   { Copy of soundMode taken at suspend so the configured mode is not lost. }
   soundSaved: Byte;
+  { Nonzero: SoundDrv.SoundCommand waits a fixed delay after each command, then silences the voices and removes its
+    timer. Zero leaves the timer driver resident for persistent playback. }
+  soundAutoStop: Word;
 
 var
   { Disks, directories and the DAX buffer }
@@ -512,7 +515,7 @@ var
   { GameInit sets it to 1; otherwise unused }
   unidentified02: Word;
   { Save directory from line 4 of POOL.CFG. }
-  dsSaveDirectory: String;
+  dsSaveDirectory: String[255];
   { GameInit sets it to 1; otherwise unused }
   unidentified03: Word;
   { POOL.CFG line 3, the game directory; gameDir[1] is its drive letter }

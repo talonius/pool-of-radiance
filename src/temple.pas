@@ -14,9 +14,9 @@ procedure TempleMainMenu;
 
 implementation
 
-{ Reports that the current character does not need the cure and asks whether to cast it anyway.
-  @param(msg The report, printed after the character's name.)
-  @returns('Y' or 'N'.) }
+{ Tells the player why the current character needs no cure and asks whether to cast it anyway.
+  @param(msg The reason, printed after the character's name.)
+  @returns(Y or N.) }
 function ConfirmCureAnyway(msg: String): Char;
 begin
   CharHlp.PrintCreatureMessage(GDVars.curChar, msg, 0, False);
@@ -151,11 +151,10 @@ end;
 
 { Raises the current character for 5500 gold pieces, asking first when it is not dead or animated; paying for a living
   character changes nothing. A dead or animated character loses its animation and poison effects, comes back with one
-  hit point, okay and enabled, and loses a point of Constitution. The hit points it gained above its rolled hit points
-  are the loss; while its Constitution is still 14 or more, the loss is divided by its Constitution bonus summed over
-  its class levels and taken off its maximum and current hit points when its Constitution is below 17 or it has fighter
-  levels. Note: a Constitution of 0 wraps, rolled hit points above the maximum wrap the loss, a bonus sum of 0 divides
-  by zero, and the current hit points, just set to 1, can wrap. }
+  hit point, okay and enabled, and loses a point of Constitution unless it has none. The hit points it gained above its
+  rolled hit points are the loss; while its Constitution is still 14 or more, the loss is divided by its Constitution
+  bonus summed over its class levels (when that sum is not 0) and taken off its maximum hit points when its Constitution
+  is below 17 or it has fighter levels. }
 procedure RaiseDead;
 var
   { Unused in this version; see the other implementations of this routine. }
@@ -188,8 +187,12 @@ begin
         creature^.hpCur := 1;
         creature^.status := C_Status.OKAY;
         creature^.enabled := 1;
-        Dec(creature^.conCur);
-        hpLoss := creature^.hpMax - creature^.hpRolled;
+        if creature^.conCur > 0 then
+          Dec(creature^.conCur);
+        if creature^.hpMax > creature^.hpRolled then
+          hpLoss := creature^.hpMax - creature^.hpRolled
+        else
+          hpLoss := 0;
         hpBonus := 0;
         if creature^.conCur >= 14 then begin
           { 7 is the last index of classLevels }
@@ -202,11 +205,10 @@ begin
               else
                 Inc(hpBonus, creature^.classLevels[i]);
             end;
-          hpLoss := hpLoss div hpBonus;
-          if (creature^.conCur < 17) or (creature^.classLevels[C_Class.FIGHTER_LEVEL] > 0) then begin
+          if hpBonus > 0 then
+            hpLoss := hpLoss div hpBonus;
+          if (creature^.conCur < 17) or (creature^.classLevels[C_Class.FIGHTER_LEVEL] > 0) then
             Dec(creature^.hpMax, hpLoss);
-            Dec(creature^.hpCur, hpLoss);
-          end;
         end;
       end;
     end;

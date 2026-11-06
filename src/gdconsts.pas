@@ -26,7 +26,7 @@ const
     (answer: 'WYVERN'; espruar: (44, 45); dethek: (71, C_Rune.NONE); path: '- - - - -')
   );
 
-{ Temple cures, combat AI stepping and placement, and the icon mask rows rebuilt at start-up. }
+{ Temple cures, combat AI stepping and placement, racial foes, turning undead, and the exploration and camp menus. }
 const
   { Effects the temple's Cure Disease removes. }
   cureDiseaseEffects: array[1..6] of Byte = (
@@ -87,18 +87,6 @@ const
     ((lo: 0; hi: 6), (lo: 0; hi: 7), (lo: 1; hi: 8), (lo: 1; hi: 0), (lo: 1; hi: 0), (lo: 1; hi: 0)),
     ((lo: 3; hi: 6), (lo: 4; hi: 7), (lo: 5; hi: 8), (lo: 6; hi: 9), (lo: 7; hi: 10), (lo: 8; hi: 10)),
     ((lo: 0; hi: 6), (lo: 0; hi: 7), (lo: 1; hi: 8), (lo: 2; hi: 9), (lo: 3; hi: 10), (lo: 4; hi: 10)));
-  { 24-pixel CGA transparency row, repeated down the mask of COMSPR icon 25 at start-up. }
-  cgaIconRowMask: array[0..5] of Byte = (
-    $0F, $FF, $FF, $FF, $FF, $F0);
-  { 24-pixel EGA transparency row, repeated down the mask of COMSPR icon 25 at start-up. }
-  egaIconRowMask: array[0..2] of Byte = (
-    $3F, $FF, $FC);
-  { 24-pixel Tandy transparency row, repeated down the mask of COMSPR icon 25 at start-up. }
-  tandyIconRowMask: array[0..11] of Byte = (
-    $00, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $00);
-
-{ Racial foes, turning undead, and the exploration and camp menus. }
-const
   { Monsters a gnome gets an attack bonus against. }
   gnomeFoes: array[1..4] of Types.TName15 = (
     'KOBOLD', 'KOBOLD LEADER', 'GOBLIN', 'GOBLIN LEADER');
